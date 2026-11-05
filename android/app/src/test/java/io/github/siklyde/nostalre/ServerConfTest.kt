@@ -13,9 +13,10 @@ class ServerConfTest {
 
 	private val dropKeys = ServerSettings.DROP_KEYS
 	private val cardKeys = ServerSettings.CARD_KEYS
-	private val worldKeys = listOf(
-		"population_engine_enable", "population_engine_max_count", "population_engine_density_pct",
-		"mob_count_rate", "mob_spawn_delay",
+
+	private val aiKeys = listOf(
+		"population_engine_chat_enable", "population_engine_chat_reply_enable",
+		"population_engine_vending_enable", "population_engine_daily_cycle",
 	)
 
 	private val defaults = ServerSettings.defaults
@@ -83,7 +84,7 @@ class ServerConfTest {
 		assertEquals( 5, values[ServerSettings.RESPAWN] )
 		assertEquals( 1, values[ServerSettings.QUEST_EXP] )
 		assertEquals( false, values[ServerSettings.SKIP_TELEPORT_MENU] )
-		assertEquals( listOf( true, false, true, true, true ), ServerSettings.NPCS.map { values[it] } )
+		assertEquals( listOf( true, false, true, true, true ), ServerSettings.NPCS.take( 5 ).map { values[it] } )
 	}
 
 	@Test fun aPickOffTheStepsReadsAsDefault() {
@@ -121,12 +122,54 @@ class ServerConfTest {
 	/** Every key written is one the server's own battle confs set (a typo would be ignored by rAthena, silently). */
 	@Test fun everyKeyIsARealSetting() {
 		val battle = File( "../../server/conf/battle" )
-		val known = listOf( "exp.conf", "drops.conf", "population_engine.conf", "monster.conf", "skill.conf" )
+		val known = listOf( "exp.conf", "drops.conf", "population_engine.conf", "monster.conf", "skill.conf", "player.conf" )
 			.flatMap { parse( File( battle, it ).readText() ).keys }.toSet()
 		val written = parse( ServerConf.battleFile( defaults ) ).keys
-		assertEquals( 4 + dropKeys.size + cardKeys.size + worldKeys.size + 1, written.size )
 		for( key in written )
 			assertTrue( key, key in known )
+	}
+
+	/** No two settings write the same key (the later would win, silently). */
+	@Test fun noTwoSettingsWriteTheSameConfKey() {
+		val lines = ServerSettings.all.flatMap { it.battleLines( defaults ) }.map { it.first }
+		assertEquals( lines.distinct(), lines )
+		assertEquals( lines.size, parse( ServerConf.battleFile( defaults ) ).size )
+	}
+
+	@Test fun multiLevelUpIsOffUntilTurnedOn() {
+		assertEquals( "0", battle( defaults )["multi_level_up"] )
+		assertEquals( "1", battle( defaults.with( ServerSettings.MULTI_LEVEL_UP, true ) )["multi_level_up"] )
+	}
+
+	@Test fun eachAiPickGoesToItsOwnKey() {
+		assertEquals( listOf( "1", "1", "1", "0" ), aiKeys.map { battle( defaults )[it] } )
+		val conf = battle( defaults
+			.with( ServerSettings.AI_CHAT, false ).with( ServerSettings.AI_REPLIES, false )
+			.with( ServerSettings.AI_SHOPS, false ).with( ServerSettings.AI_ROUTINE, true ) )
+		assertEquals( listOf( "0", "0", "0", "1" ), aiKeys.map { conf[it] } )
+	}
+
+	/** The heal timer ticks every 500 ms (NATURAL_HEAL_INTERVAL), the least the server takes. */
+	@Test fun regenSpeedDividesTheHealIntervals() {
+		val official = battle( defaults )
+		assertEquals( "6000", official["natural_healhp_interval"] )
+		assertEquals( "8000", official["natural_healsp_interval"] )
+		val twice = battle( defaults.with( ServerSettings.REGEN, 2 ) )
+		assertEquals( "3000", twice["natural_healhp_interval"] )
+		assertEquals( "4000", twice["natural_healsp_interval"] )
+		for( step in ServerSettings.REGEN_STEPS ) {
+			val conf = battle( defaults.with( ServerSettings.REGEN, step ) )
+			assertTrue( conf["natural_healhp_interval"]!!.toInt() >= 500 )
+			assertTrue( conf["natural_healsp_interval"]!!.toInt() >= 500 )
+		}
+	}
+
+	@Test fun deathPenaltyGoesToBaseAndJob() {
+		assertEquals( "100", battle( defaults )["death_penalty_base"] )
+		val conf = battle( defaults.with( ServerSettings.DEATH_PENALTY, 0 ) )
+		assertEquals( "0", conf["death_penalty_base"] )
+		assertEquals( "0", conf["death_penalty_job"] )
+		assertEquals( listOf( "Off", "0.25%", "0.5%", "1%", "2%" ), ServerSettings.DEATH_PENALTY_STEPS.map( ServerSettings.DEATH_PENALTY.format ) )
 	}
 
 	/** Each setting saves under its own key of its store: none overwrites another's pick. */
@@ -144,15 +187,23 @@ class ServerConfTest {
 			assertTrue( setting.key, setting.default in setting.steps )
 	}
 
-	@Test fun allNpcsOnWritesNoDelnpc() {
-		assertTrue( ServerConf.helpersFile( defaults ).lines().none { it.startsWith( "delnpc:" ) } )
+	private fun npcLines( values: ServerSettings.Values ) =
+		ServerConf.npcFile( values ).lines().filter { it.isNotBlank() && !it.startsWith( "//" ) }
+
+	@Test fun npcsAsTheyStartWriteNothing() {
+		assertEquals( emptyList<String>(), npcLines( defaults ) )
 	}
 
 	@Test fun eachNpcOffBecomesADelnpcLine() {
 		val ( jobMaster, _, healer ) = ServerSettings.NPCS
-		val lines = ServerConf.helpersFile( defaults.with( jobMaster, false ).with( healer, false ) )
-			.lines().filter { it.startsWith( "delnpc:" ) }
+		val lines = npcLines( defaults.with( jobMaster, false ).with( healer, false ) )
 		assertEquals( listOf( "delnpc: npc/custom/jobmaster.txt", "delnpc: npc/custom/healer.txt" ), lines )
+	}
+
+	@Test fun anNpcTheServerLeavesOutIsLoadedWhenTurnedOn() {
+		val platinum = ServerSettings.NPCS.first { it.file == "platinum_skills" }
+		assertEquals( false, defaults[platinum] )
+		assertEquals( listOf( "npc: npc/custom/platinum_skills.txt" ), npcLines( defaults.with( platinum, true ) ) )
 	}
 
 	/** Each helper is one the server loads, and the off file comes after them (delnpc only drops a file already listed). */
@@ -161,8 +212,13 @@ class ServerConfTest {
 		val offAt = conf.indexOf( "import: npc/nostalre_off.conf" )
 		assertTrue( "scripts_custom.conf imports npc/nostalre_off.conf", offAt >= 0 )
 		for( npc in ServerSettings.NPCS ) {
+			assertTrue( npc.file, File( "../../server/npc/custom/${npc.file}.txt" ).isFile )
 			val at = conf.indexOf( "npc: npc/custom/${npc.file}.txt" )
-			assertTrue( npc.file, at in 0 until offAt )
+			// on to start with: one the server loads; off: one it leaves out, else turning it on would load it twice
+			if( npc.default )
+				assertTrue( npc.file, at in 0 until offAt )
+			else
+				assertEquals( npc.file, -1, at )
 		}
 	}
 }

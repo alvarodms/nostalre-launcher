@@ -71,17 +71,20 @@ object ServerConf {
 		file.writeText( battleFile( ServerSettings.load( context ) ) )
 	}
 
-	/** npc/nostalre_off.conf for the NPCs turned off in [values]: scripts_custom.conf imports it after loading them all. */
-	fun helpersFile( values: ServerSettings.Values ): String = buildString {
-		appendLine( "// Written by the nostalRE app at every server start: the custom NPCs turned off in its settings" )
+	/**
+	 * npc/nostalre_off.conf for the custom NPCs in [values]: scripts_custom.conf imports it after loading its own, so
+	 * it drops (delnpc) the ones turned off and loads (npc) the ones turned on that it leaves out.
+	 */
+	fun npcFile( values: ServerSettings.Values ): String = buildString {
+		appendLine( "// Written by the nostalRE app at every server start: the custom NPCs turned on or off in its settings" )
 		for( setting in ServerSettings.all )
-			for( file in setting.npcsOffFor( values ) )
-				appendLine( "delnpc: npc/custom/$file.txt" )
+			for( line in setting.npcLines( values ) )
+				appendLine( line )
 	}
 
 	/** The saved choice into the servers' npc folder, before every start (an app update unpacks it afresh). */
-	fun writeHelpers( context: Context ) {
-		File( Paths( context ).server, "npc/nostalre_off.conf" ).writeText( helpersFile( ServerSettings.load( context ) ) )
+	fun writeNpcs( context: Context ) {
+		File( Paths( context ).server, "npc/nostalre_off.conf" ).writeText( npcFile( ServerSettings.load( context ) ) )
 	}
 
 	/** The map a new Human (or [doram]) character starts on: the first of start_point (start_point_doram). */
