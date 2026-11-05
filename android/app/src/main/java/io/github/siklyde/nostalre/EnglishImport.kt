@@ -1,15 +1,16 @@
 package io.github.siklyde.nostalre
 
 import java.io.File
+import java.io.IOException
 import java.nio.charset.Charset
 import java.util.TreeMap
+import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 /**
  * scripts/import-english.py on the device: ROenglishRE's English text written into the game folder's data/, from the
- * translation's own files ([files] says which, [build] writes them), byte for byte what the script writes. One
- * difference: iteminfo_en.lub is the translation's itemInfo.lua as Lua source, as the device has no luac; the game
- * compiles it itself.
+ * translation's own files ([files] says which, [build] writes them), byte for byte what the script writes, its
+ * luac5.1 the one the APK carries (luac/, built by scripts/build-luac.sh).
  *
  * Plain JVM, so a unit test can hold it against the script. Text is handled as Latin-1 strings, a character per byte,
  * as the script handles bytes: the translation's Korean is CP949, never decoded.
@@ -22,6 +23,7 @@ object EnglishImport {
 	private const val PRE_SKILL_DESCRIPTIONS = "${PRE_RENEWAL}data/lua files/skillinfoz/skilldescript.lub"
 	private const val PRE_SKILL_NAMES = "${PRE_RENEWAL}data/skillnametable.txt"
 	private const val ITEM_INFO_EN = "luafiles514/lua files/datainfo/iteminfo_en.lub"
+	private const val LUAC_TIMEOUT_S = 120L
 
 	private val KEEP_DIRS = setOf( "texture", "book" )
 	private val KEEP_EXT = setOf( ".txt", ".xml", ".bmp", ".tga", ".jpg", ".png", ".spr", ".act" )
@@ -42,21 +44,31 @@ object EnglishImport {
 	/**
 	 * The English text into [target] (the game folder's data/): the translation's files, read from [source] (a
 	 * folder holding at least [files] of [listing] by path), then the tables made from them and from rAthena's db
-	 * ([rathenaDb], the servers' db/re).
+	 * ([rathenaDb], the servers' db/re), and the item table compiled with [luac] (Lua 5.1's). The compiling goes
+	 * first: when it fails, nothing is written.
 	 */
-	fun build( listing: Collection<String>, source: File, rathenaDb: File, target: File ) {
-		target.mkdirs()
-		val root = target.canonicalFile
-		for( ( path, relative ) in copies( listing ) ) {
-			val dest = File( root, relative )
-			require( dest.canonicalPath.startsWith( root.path + File.separator ) ) { "refusing path outside $target: $relative" }
-			dest.parentFile?.mkdirs()
-			File( source, path ).copyTo( dest, overwrite = true )
+	fun build( listing: Collection<String>, source: File, rathenaDb: File, target: File, luac: File ) {
+		val itemInfo = compileItemInfo( source, luac )
+		try {
+			target.mkdirs()
+			val root = target.canonicalFile
+			for( ( path, relative ) in copies( listing ) ) {
+				val dest = File( root, relative )
+				require( dest.canonicalPath.startsWith( root.path + File.separator ) ) { "refusing path outside $target: $relative" }
+				dest.parentFile?.mkdirs()
+				File( source, path ).copyTo( dest, overwrite = true )
+			}
+			writeItemTables( source, rathenaDb, root )
+			writeRathenaTables( rathenaDb, root )
+			if( itemInfo != null ) {
+				val dest = File( root, ITEM_INFO_EN )
+				dest.parentFile?.mkdirs()
+				itemInfo.copyTo( dest, overwrite = true )
+			}
+			writeSkillTables( source, rathenaDb, root )
+		} finally {
+			itemInfo?.delete()
 		}
-		writeItemTables( source, rathenaDb, root )
-		writeRathenaTables( rathenaDb, root )
-		writeItemInfo( source, root )
-		writeSkillTables( source, rathenaDb, root )
 	}
 
 	/**
@@ -138,14 +150,36 @@ object EnglishImport {
 			} )
 	}
 
-	/** The translation's Renewal itemInfo.lua as data/…/iteminfo_en.lub, the items kRO's own iteminfo lacks. */
-	private fun writeItemInfo( source: File, data: File ) {
+	/**
+	 * The translation's Renewal itemInfo.lua compiled, for data/…/iteminfo_en.lub (the items kRO's own iteminfo lacks;
+	 * the game reads iteminfo compiled only), as a temporary file; null without it.
+	 */
+	private fun compileItemInfo( source: File, luac: File ): File? {
 		val file = File( source, RENEWAL + ITEM_INFO )
 		if( !file.exists() )
-			return
-		val target = File( data, ITEM_INFO_EN )
-		target.parentFile?.mkdirs()
-		file.copyTo( target, overwrite = true )
+			return null
+		val compiled = File.createTempFile( "iteminfo_en", ".lub" )
+		val log = File.createTempFile( "luac", ".log" )
+		compiled.delete()
+		try {
+			runLuac( luac, file, compiled, log )
+		} finally {
+			log.delete()
+		}
+		return compiled
+	}
+
+	private fun runLuac( luac: File, file: File, compiled: File, log: File ) {
+		val process = ProcessBuilder( luac.path, "-s", "-o", compiled.path, file.path )
+			.redirectErrorStream( true )
+			.redirectOutput( log )
+			.start()
+		if( !process.waitFor( LUAC_TIMEOUT_S, TimeUnit.SECONDS ) ) {
+			process.destroyForcibly()
+			throw IOException( "luac did not finish" )
+		}
+		if( process.exitValue() != 0 || !compiled.isFile )
+			throw IOException( "luac could not compile itemInfo.lua: ${log.readText().trim()}" )
 	}
 
 	private fun itemDbFiles( rathenaDb: File ): List<File> =

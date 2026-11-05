@@ -16,6 +16,9 @@ The hub's sprite and action reading (android/.../SpriteFiles.kt, CharacterSprite
 protocol and name encoding (bridge/grf_server.cpp) follow roBrowser (roBrowserLegacy) by Vincent Thibault and
 contributors, https://github.com/MrAntares/roBrowserLegacy, GNU GPL version 3.
 
+luac/lua-5.1.5/ is Lua 5.1.5's compiler and core, https://www.lua.org, by Lua.org, PUC-Rio, MIT license
+(luac/lua-5.1.5/COPYRIGHT), unmodified. The app runs it to compile the English translation's item table.
+
 The table generators (scripts/*-tables.py, skill-enum.py, effect-id.py, job-names.py) read rAthena's data and
 source: their output in client/ and android/ carries rAthena's GPL terms, as client/NOTICE states.
 

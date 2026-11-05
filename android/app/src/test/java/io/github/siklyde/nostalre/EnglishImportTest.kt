@@ -1,7 +1,9 @@
 package io.github.siklyde.nostalre
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
@@ -10,6 +12,9 @@ import java.io.File
 
 class EnglishImportTest {
 	@get:Rule val tmp = TemporaryFolder()
+
+	/** The host's luac 5.1 (scripts/build-luac.sh host), or ENGLISH_LUAC; the tests that compile skip without it. */
+	private val luac = File( System.getenv( "ENGLISH_LUAC" ) ?: "../../out/host/bin/luac" )
 
 	@Test fun luaTablesReadAsTheScriptReadsThem() {
 		val lua = """
@@ -51,30 +56,44 @@ class EnglishImportTest {
 		), EnglishImport.copies( listing ).map { it.first } )
 	}
 
+	@Test fun anItemTableThatDoesNotCompileWritesNothing() {
+		assumeTrue( luac.canExecute() )
+		val source = tmp.newFolder( "source" )
+		File( source, "Translation/Renewal/SystemEN/LuaFiles514/itemInfo.lua" ).apply {
+			parentFile.mkdirs()
+			writeText( "tbl = {" )
+		}
+		val target = File( tmp.root, "data" )
+		try {
+			EnglishImport.build( listOf( "Translation/Renewal/data/msgstringtable.txt" ), source, tmp.newFolder( "db" ), target, luac )
+			fail( "built from a table that does not compile" )
+		} catch( e: java.io.IOException ) {
+			assertTrue( e.message, e.message!!.startsWith( "luac could not compile itemInfo.lua" ) )
+		}
+		assertFalse( target.exists() )
+	}
+
 	/**
-	 * The whole import against scripts/import-english.py's output for the same translation: ENGLISH_CHECKOUT, a
-	 * ROenglishRE checkout at [EnglishText.COMMIT] with Translation/Compatibility on disk, and ENGLISH_EXPECTED, the
-	 * game folder the script wrote into. Skipped without them.
+	 * The whole import against scripts/import-english.py's output for the same translation, both with the host's
+	 * luac 5.1: ENGLISH_CHECKOUT, a ROenglishRE checkout at [EnglishText.COMMIT] with Translation/Compatibility on
+	 * disk, and ENGLISH_EXPECTED, the game folder the script wrote into (luac5.1 on its PATH). Skipped without them.
 	 */
 	@Test fun matchesThePcScript() {
 		val checkout = System.getenv( "ENGLISH_CHECKOUT" )?.let( ::File )
 		val expected = System.getenv( "ENGLISH_EXPECTED" )?.let { File( it, "data" ) }
-		assumeTrue( checkout != null && expected != null )
+		assumeTrue( checkout != null && expected != null && luac.canExecute() )
 		val rathenaDb = File( System.getenv( "ENGLISH_RATHENA_DB" ) ?: "../../server/db/re" )
 		val listing = File( checkout, "Translation" ).walkTopDown().filter { it.isFile }
 			.map { it.relativeTo( checkout!! ).invariantSeparatorsPath }.toList()
 		val target = tmp.newFolder( "data" )
 
-		EnglishImport.build( listing, checkout!!, rathenaDb, target )
+		EnglishImport.build( listing, checkout!!, rathenaDb, target, luac )
 
-		// the app writes iteminfo_en.lub as Lua source, the script compiles it (or skips it without luac)
-		val itemInfo = "luafiles514/lua files/datainfo/iteminfo_en.lub"
-		fun files( dir: File ) = dir.walkTopDown().filter { it.isFile }.map { it.relativeTo( dir ).invariantSeparatorsPath }
-			.filter { it != itemInfo }.toSortedSet()
-		assertEquals( files( expected!! ), files( target ) )
+		fun files( dir: File ) = dir.walkTopDown().filter { it.isFile }.map { it.relativeTo( dir ).invariantSeparatorsPath }.toSortedSet()
+		assertTrue( "the script wrote no iteminfo_en.lub: no luac5.1 on its PATH",
+			"luafiles514/lua files/datainfo/iteminfo_en.lub" in files( expected!! ) )
+		assertEquals( files( expected ), files( target ) )
 		val different = files( expected ).filter { !File( expected, it ).readBytes().contentEquals( File( target, it ).readBytes() ) }
 		assertEquals( emptyList<String>(), different )
-		assertTrue( File( target, itemInfo ).readBytes().contentEquals(
-			File( checkout, "Translation/Renewal/SystemEN/LuaFiles514/itemInfo.lua" ).readBytes() ) )
 	}
 }

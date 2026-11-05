@@ -79,6 +79,7 @@ and its servers on a PC.
 | `server/` | rAthena with an embedded SQLite backend and Android support (submodule, [si-klyde/rathena-nostalre](https://github.com/si-klyde/rathena-nostalre)) |
 | `android/` | The Android app: setup, the character hub and creator, the servers as background processes |
 | `bridge/` | `grf-server`: the game files over local HTTP, for the hub's character pictures and map names |
+| `luac/` | Lua 5.1.5's compiler, which the app runs to compile the English translation's item table |
 | `scripts/` | Build and run scripts, and the generators of the client's rAthena-derived tables |
 | `game-data/` | Your own game files for PC play (never committed) |
 
@@ -145,7 +146,8 @@ kRO's data is in Korean. The app sets up the English text itself: in *Settings* 
 from GitHub (about 106 MB, once) and writes it into the game folder's `data/`, from the next game on. The app installs
 one tested version of the translation; when a newer app moves to a newer one, the same row offers *Update*.
 
-On a PC instead, a script writes the same files (Python 3 with PyYAML, and `luac5.1`):
+On a PC instead, a script writes the same files (Python 3 with PyYAML, and `luac5.1`; without one,
+`scripts/build-luac.sh host` builds it as `out/host/bin/luac`):
 
 ```sh
 git clone https://github.com/llchrisll/ROenglishRE.git

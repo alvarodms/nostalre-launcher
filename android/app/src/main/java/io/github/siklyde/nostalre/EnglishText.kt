@@ -16,7 +16,7 @@ import kotlin.concurrent.thread
 /**
  * The English text, set up from the app: ROenglishRE (llchrisll's English translation, which has no license, so the
  * APK cannot carry it) downloaded from GitHub at [COMMIT] and written into the game folder's data/ by
- * [EnglishImport], as scripts/import-english.py does on a PC. One run at a time, on its own thread, which goes on
+ * [EnglishImport], as scripts/import-english.py does on a PC, with the luac the APK carries (libluac.so). One run at a time, on its own thread, which goes on
  * when the screen that started it closes; [listen] follows it. The files wait in the cache until the run finishes, so
  * a run cut short picks up where it stopped.
  */
@@ -117,7 +117,8 @@ object EnglishText {
 
 		update( State.Working( "Writing the English text into ${gameDir.name}/data…" ) )
 		val data = File( gameDir, "data" )
-		EnglishImport.build( blobs.keys, staging, File( Paths( context ).server, "db/re" ), data )
+		val paths = Paths( context )
+		EnglishImport.build( blobs.keys, staging, File( paths.server, "db/re" ), data, File( paths.bin, "libluac.so" ) )
 		File( data, MARKER ).writeText( "$COMMIT\n" )
 		cache.deleteRecursively()
 	}
