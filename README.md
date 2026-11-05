@@ -79,6 +79,7 @@ and its servers on a PC.
 | `server/` | rAthena with an embedded SQLite backend and Android support (submodule, [si-klyde/rathena-nostalre](https://github.com/si-klyde/rathena-nostalre)) |
 | `android/` | The Android app: setup, the character hub and creator, the servers as background processes |
 | `bridge/` | `grf-server`: the game files over local HTTP, for the hub's character pictures and map names |
+| `luac/` | Lua 5.1.5's compiler, which the app runs to compile the English translation's item table |
 | `scripts/` | Build and run scripts, and the generators of the client's rAthena-derived tables |
 | `game-data/` | Your own game files for PC play (never committed) |
 
@@ -132,7 +133,7 @@ That is all: the app finds the archives by itself and tells you if something is 
 
 `DATA.INI` is optional: the app reads the archives it lists, in order (the first one holding a file wins), and adds
 `official_data.grf` when the folder has it but `DATA.INI` does not name it. Without one it reads `data.grf`, then
-`official_data.grf`. The app never changes the folder.
+`official_data.grf`. The app changes nothing in the folder, except `data/` when you install the English text from it.
 
 </details>
 
@@ -140,8 +141,14 @@ That is all: the app finds the archives by itself and tells you if something is 
 
 ### English text
 
-kRO's data is in Korean. Until the app can do it itself, the English text is set up on a PC, once, by a script
-that writes the ROenglishRE translation into the game folder's `data/` (Python 3 with PyYAML, and `luac5.1`):
+kRO's data is in Korean. The app sets up the English text itself: in *Settings* (Start in the character list),
+*Game text*, choose *Download*. It downloads the newest [ROenglishRE](https://github.com/llchrisll/ROenglishRE)
+translation from GitHub (about 100 MB) and writes it into the game folder's `data/`, from the next game on. Each time
+*Settings* opens, the app asks GitHub whether the translation has changed since: *Update* lights up when it has, and
+stays greyed out when it has not.
+
+On a PC instead, a script writes the same files (Python 3 with PyYAML, and `luac5.1`; without one,
+`scripts/build-luac.sh host` builds it as `out/host/bin/luac`):
 
 ```sh
 git clone https://github.com/llchrisll/ROenglishRE.git
@@ -165,7 +172,7 @@ a development key, so 0.1.2 and later cannot install over it; uninstall 0.1.1 fi
 | *No official_data.grf in this folder* | Download it ([Installation](#installation), step 2) and put it next to `data.grf`; you can play without it, minus some monsters and NPCs |
 | *Port … did not open* | A server failed to start: the message shows where its logs are. Restart the app, and [report it](https://github.com/si-klyde/nostalre-launcher/issues/new) with the log if it repeats |
 | Characters or monsters drawn as nothing | `official_data.grf` is missing, or a `DATA.INI` lists it before `data.grf` |
-| Korean text in game | Add the English `data/` folder ([English text](#english-text)) |
+| Korean text in game | Install the English text from *Settings* ([English text](#english-text)) |
 
 When reporting a problem, include the app version, the device and Android version, and the steps that lead to it.
 
@@ -261,7 +268,7 @@ job names. After changing `server/`, rerun the generator and commit its output w
 - [x] Controller in NPC dialogs, deal popups and shops; talk to the nearest NPC
 - [x] Release-signed APKs
 - [ ] Continuous integration for this repository
-- [ ] English text set up inside the app, without a PC
+- [x] English text set up inside the app, without a PC
 - [x] The app finds the archives itself and says what the folder lacks
 - [ ] Larger dialogs and shop windows on handhelds
 - [ ] No `official_data.grf` needed

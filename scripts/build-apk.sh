@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Builds the Android app: rAthena's servers, the bridge and nostalRE for Android, a fresh database (the app creates
-# the account), staged into out/build/apk and packed by Gradle. Game files are not bundled, the app reads them from
-# storage.
+# Builds the Android app: rAthena's servers, the bridge, luac (for the English text) and nostalRE for Android, a
+# fresh database (the app creates the account), staged into out/build/apk and packed by Gradle. Game files are not
+# bundled, the app reads them from storage.
 # Usage: scripts/build-apk.sh [--skip-native] [--release] [--side]
 #   --skip-native: reuse out/android/bin and the client's last Android build
 #   --release: the release build (not debuggable) for publishing, signed with the release key; it needs the key in
@@ -30,6 +30,7 @@ client_library="${client_parts[1]}"
 if ! $skip_native; then
 	"$ROOT/scripts/build-server.sh" android
 	"$ROOT/scripts/build-bridge.sh" android
+	"$ROOT/scripts/build-luac.sh" android
 	( cd "$CLIENT" && ANDROID_NDK_HOME="$NDK" cargo ndk -t "$ANDROID_ABI" -P "$ANDROID_API" \
 		build --release -p "$client_package" --lib )
 fi
@@ -44,16 +45,17 @@ libs="$stage/jniLibs/$ANDROID_ABI"
 rm -rf "$stage" && mkdir -p "$libs" "$stage/assets"
 
 # executables ship as lib*.so: only the native library dir may hold files an app can run
-for bin in login-server char-server map-server grf-server; do
+for bin in login-server char-server map-server grf-server luac; do
 	cp "$OUT/android/bin/$bin" "$libs/lib${bin//-/}.so"
 done
 "$NDK_BIN/llvm-strip" -o "$libs/$(basename "$client_library")" "$client_library"
 
-# the licenses and notices of what the APK carries: this repository (the app, the bridge, rAthena's GPL) and
-# nostalRE's own
+# the licenses and notices of what the APK carries: this repository (the app, the bridge, rAthena's GPL), Lua's
+# (luac) and nostalRE's own
 notices="$stage/assets/licenses"
-mkdir -p "$notices/nostalre/rust-ro" "$notices/nostalre/winit" "$notices/nostalre/fonts"
+mkdir -p "$notices/nostalre/rust-ro" "$notices/nostalre/winit" "$notices/nostalre/fonts" "$notices/lua"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$notices/"
+cp "$ROOT/luac/lua-5.1.5/COPYRIGHT" "$notices/lua/"
 cp "$CLIENT/LICENSE.md" "$CLIENT/NOTICE" "$notices/nostalre/"
 cp -r "$CLIENT/LICENSES" "$notices/nostalre/"
 cp "$CLIENT/rust-ro/LICENSE.md" "$notices/nostalre/rust-ro/"
