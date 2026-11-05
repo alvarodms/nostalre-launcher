@@ -29,8 +29,8 @@ import kotlin.math.abs
  * one was made or deleted.
  *
  * Controller: left/right or L1/R1 step through the line-up, A plays (or makes, on the last stop), X makes, Y deletes,
- * Start opens the settings ([SettingsScreen]). Touch: swipe or tap a neighbour to step, and the buttons along the bottom.
- * [onRestart] starts the servers again with new rates or helper NPCs (picked in the settings), then the hub selecting a
+ * Start opens the settings ([SettingsScreen]), which takes the controller while open. Touch: swipe or tap a neighbour to step, and the buttons along the bottom.
+ * [onRestart] starts the servers again with new server settings (picked in the settings), then the hub selecting a
  * character.
  */
 class Hub(
@@ -262,15 +262,7 @@ class Hub(
 	}
 
 	fun onKey( event: KeyEvent ): Boolean {
-		settingsScreen?.let { screen ->
-			val leave = event.keyCode in listOf( KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_MENU )
-			if( !leave )
-				return false
-			// on the press: the release of the Start press that opened the screen must not close it again
-			if( event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 )
-				screen.close()
-			return true
-		}
+		settingsScreen?.let { return it.onKey( event ) }
 		creator?.let { creator ->
 			if( event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_BUTTON_B ) {
 				if( event.action == KeyEvent.ACTION_UP )
@@ -343,15 +335,15 @@ class Hub(
 	private fun openSettings( isGm: Boolean ) {
 		if( creator != null || settingsScreen != null )
 			return
-		val screen = SettingsScreen( context, isGm ) { changed -> closeSettings( changed ) }
+		val screen = SettingsScreen( context, isGm ) { restart -> closeSettings( restart ) }
 		settingsScreen = screen
 		select.visibility = View.GONE
 		root.addView( screen.view() )
 		screen.focusFirst()
 	}
 
-	/** Back to the line-up; rates or helpers [changed]: the servers restart with them first. */
-	private fun closeSettings( changed: Boolean ) {
+	/** Back to the line-up; on [restart] (server settings or the English text changed) the servers restart first. */
+	private fun closeSettings( restart: Boolean ) {
 		settingsScreen = null
 		root.removeAllViews()
 		root.addView( select )
@@ -360,7 +352,7 @@ class Hub(
 		root.isFocusable = true
 		root.defaultFocusHighlightEnabled = false
 		root.requestFocus()
-		if( changed )
+		if( restart )
 			onRestart( characters.getOrNull( selected )?.id ?: 0 )
 	}
 
