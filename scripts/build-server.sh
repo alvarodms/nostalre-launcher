@@ -29,7 +29,7 @@ case "$target" in
 			-DHAVE_TLS_EXITCODE=0
 			-DHAVE_MONOTONIC_CLOCK_EXITCODE=0
 			# no librt on Android, clock functions are in libc
-			-DRT_LIBRARY="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API/libc.so" )
+			-DRT_LIBRARY="$NDK/toolchains/llvm/prebuilt/$NDK_HOST/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API/libc.so" )
 		;;
 	*) echo "unknown target: $target" >&2; exit 1 ;;
 esac
