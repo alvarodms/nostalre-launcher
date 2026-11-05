@@ -12,8 +12,9 @@ import kotlin.concurrent.thread
 
 /**
  * The hub's settings, a screen like character creation's: the servers' rates, world and town helpers ([ServerConf]),
- * and GM commands ([Account]). GM commands save at once; the rest when the screen closes, [onClose] told whether it
- * changed (the servers restart with it).
+ * GM commands ([Account]) and the English text ([EnglishText]). GM commands save at once, the English text installs
+ * on its own thread; the rest saves when the screen closes, [onClose] told whether it changed (the servers restart
+ * with it, and with new English text, which grf-server reads at its start).
  *
  * Controller: the D-pad moves between choices, A sets the one it is on, B or Start goes back ([Hub]). Touch: tap.
  */
@@ -29,8 +30,12 @@ class SettingsScreen(
 	private val offBefore: Set<ServerConf.Helper> = ServerConf.helpersOff( context )
 	private val off: MutableSet<ServerConf.Helper> = offBefore.toMutableSet()
 	private var gm = isGm
+	private val gameDir = GameDir.get( context )
+	private val englishBefore = EnglishText.finished
+	private var stopListening: () -> Unit = {}
 
-	private val changed: Boolean get() = rates != ratesBefore || world != worldBefore || off != offBefore
+	private val changed: Boolean get() =
+		rates != ratesBefore || world != worldBefore || off != offBefore || EnglishText.finished != englishBefore
 
 	private val help = Ui.text( context, 13f ).fit( 10, 13 )
 	private val helpersOn = Ui.text( context, 11f, Ui.DIM )
@@ -64,6 +69,8 @@ class SettingsScreen(
 			addView( section( "ACCOUNT" ).spaced() )
 			addView( toggleRow( "GM commands", "@ commands in chat, like @warp and @item. Saved now; from your next game.",
 				{ gm } ) { setGm( it ) } )
+			addView( section( "GAME TEXT" ).spaced() )
+			addView( englishRow() )
 		}
 		val right = LinearLayout( context ).apply {
 			orientation = LinearLayout.VERTICAL
@@ -102,6 +109,7 @@ class SettingsScreen(
 
 	/** B, Back or Start: saves what changed and goes back. */
 	fun close() {
+		stopListening()
 		if( changed ) {
 			ServerConf.saveRates( context, rates )
 			ServerConf.saveWorld( context, world )
@@ -125,6 +133,51 @@ class SettingsScreen(
 					refresh()
 					help.text = "GM commands were not saved: the save database is busy. Try again."
 				}
+		}
+	}
+
+	/**
+	 * English text: Download, Update or Again, and below it where it stands (the run's progress, what went wrong, what
+	 * is installed).
+	 */
+	private fun englishRow(): View {
+		val status = Ui.text( context, 12f, Ui.DIM )
+		val action = Ui.text( context, 14f ).apply {
+			gravity = Gravity.CENTER
+			isFocusable = true
+			isClickable = true
+			pad( context, 16f, 0f )
+			onFocus( ENGLISH_HELP )
+			setOnClickListener { gameDir?.let { EnglishText.start( context, it ) } }
+		}
+		fun show( state: EnglishText.State ) {
+			val installed = gameDir?.let { EnglishText.installed( it ) } ?: EnglishText.Installed.NONE
+			val version = "ROenglishRE ${EnglishText.COMMIT.take( 7 )}"
+			action.text = when {
+				state is EnglishText.State.Working -> "…"
+				installed == EnglishText.Installed.CURRENT -> "Again"
+				installed == EnglishText.Installed.OLDER -> "Update"
+				else -> "Download"
+			}
+			action.background = Ui.choice( context, state !is EnglishText.State.Working && installed != EnglishText.Installed.CURRENT )
+			status.text = when {
+				gameDir == null -> "Choose a game folder first."
+				state is EnglishText.State.Working -> state.message
+				state is EnglishText.State.Failed -> "Not installed: ${state.message}."
+				installed == EnglishText.Installed.CURRENT -> "Installed: $version."
+				installed == EnglishText.Installed.OLDER -> "An older translation is installed. Update to $version."
+				installed == EnglishText.Installed.OTHER -> "Set up outside the app. Download to replace it with $version."
+				else -> "The game's text is in Korean. Download the English translation (about 106 MB)."
+			}
+			update()
+		}
+		stopListening = EnglishText.listen { state -> status.post { show( state ) } }
+		return LinearLayout( context ).apply {
+			orientation = LinearLayout.VERTICAL
+			addView( row( "English text" ).apply {
+				addView( action, LinearLayout.LayoutParams( Ui.dp( context, 112f ), Ui.dp( context, 34f ) ) )
+			} )
+			addView( status )
 		}
 	}
 
@@ -231,5 +284,7 @@ class SettingsScreen(
 
 	private companion object {
 		const val DEFAULT_HELP = "Pick how the game's server plays. Your characters keep everything when it restarts."
+		const val ENGLISH_HELP = "ROenglishRE, llchrisll's English translation, downloaded from GitHub into your game " +
+			"folder's data/ (about 106 MB). It goes on if you leave this screen; in use from your next game."
 	}
 }
