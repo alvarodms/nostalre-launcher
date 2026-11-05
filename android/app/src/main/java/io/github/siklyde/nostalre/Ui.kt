@@ -125,6 +125,14 @@ object Ui {
 		return RippleDrawable( ColorStateList.valueOf( 0x33FFFFFF ), states, rounded( context, PARCHMENT, 17f ) )
 	}
 
+	/** A settings row the controller rests on: clear, with a faint fill and an accent ring while focused. */
+	fun row( context: Context ): Drawable = StateListDrawable().apply {
+		addState( intArrayOf( android.R.attr.state_focused ), rounded( context, 0x14FFFFFF, 10f ).apply {
+			setStroke( dp( context, 2f ), ACCENT )
+		} )
+		addState( intArrayOf(), rounded( context, 0, 10f ) )
+	}
+
 	/** A section label in the accent, letter spaced, with its rule running to the right (and [extra] after it). */
 	fun section( context: Context, label: String, extra: View? = null ) = LinearLayout( context ).apply {
 		gravity = android.view.Gravity.CENTER_VERTICAL

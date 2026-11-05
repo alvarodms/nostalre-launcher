@@ -11,33 +11,33 @@ class ServerConfTest {
 		text.lines().map { it.substringBefore( "//" ) }.filter { ':' in it }
 			.associate { it.substringBefore( ':' ).trim() to it.substringAfter( ':' ).trim() }
 
-	private val dropKeys = listOf(
-		"item_rate_common", "item_rate_common_boss", "item_rate_common_mvp",
-		"item_rate_heal", "item_rate_heal_boss", "item_rate_heal_mvp",
-		"item_rate_use", "item_rate_use_boss", "item_rate_use_mvp",
-		"item_rate_equip", "item_rate_equip_boss", "item_rate_equip_mvp",
-		"item_rate_mvp", "item_rate_adddrop", "item_group_rate", "item_rate_treasure",
-	)
-	private val cardKeys = listOf( "item_rate_card", "item_rate_card_boss", "item_rate_card_mvp" )
+	private val dropKeys = ServerSettings.DROP_KEYS
+	private val cardKeys = ServerSettings.CARD_KEYS
 	private val worldKeys = listOf(
 		"population_engine_enable", "population_engine_max_count", "population_engine_density_pct",
 		"mob_count_rate", "mob_spawn_delay",
 	)
 
-	private fun world( world: ServerConf.World ) = parse( ServerConf.battleFile( ServerConf.Rates(), world ) )
+	private val defaults = ServerSettings.defaults
 
-	@Test fun noSavedWorldMeansShellsOnAtTwoHundredAndOfficialMonsters() {
-		val conf = world( ServerConf.World.from( emptyMap<String, Any>() ) )
+	private fun battle( values: ServerSettings.Values ) = parse( ServerConf.battleFile( values ) )
+
+	@Test fun noSavedSettingsMeanShellsOnAtTwoHundredAndOfficialEverything() {
+		val conf = battle( ServerSettings.read( emptyMap() ) )
 		assertEquals( "1", conf["population_engine_enable"] )
 		assertEquals( "200", conf["population_engine_max_count"] )
 		assertEquals( "100", conf["population_engine_density_pct"] )
 		assertEquals( "100", conf["mob_count_rate"] )
 		assertEquals( "100", conf["mob_spawn_delay"] )
 		assertEquals( "100", conf["base_exp_rate"] )
+		assertEquals( "100", conf["quest_exp_rate"] )
+		assertEquals( "0", conf["skip_teleport_lv1_menu"] )
 	}
 
 	@Test fun eachWorldPickGoesToItsOwnKey() {
-		val conf = world( ServerConf.World( ai = false, maxShells = 500, density = 50, monsters = 300, respawn = 10 ) )
+		val conf = battle( defaults
+			.with( ServerSettings.AI, false ).with( ServerSettings.MAX_AI, 500 ).with( ServerSettings.DENSITY, 50 )
+			.with( ServerSettings.MONSTERS, 300 ).with( ServerSettings.RESPAWN, 10 ) )
 		assertEquals( "0", conf["population_engine_enable"] )
 		assertEquals( "500", conf["population_engine_max_count"] )
 		assertEquals( "50", conf["population_engine_density_pct"] )
@@ -46,89 +46,111 @@ class ServerConfTest {
 	}
 
 	@Test fun respawnSpeedIsTheDelayDivided() {
-		val delays = ServerConf.World.RESPAWN_STEPS.map { world( ServerConf.World( respawn = it ) )["mob_spawn_delay"] }
+		val delays = ServerSettings.RESPAWN_STEPS.map { battle( defaults.with( ServerSettings.RESPAWN, it ) )["mob_spawn_delay"] }
 		assertEquals( listOf( "100", "50", "33", "20", "10" ), delays )
 	}
 
 	@Test fun worldStepsAsPlanned() {
-		assertEquals( listOf( 50, 100, 200, 300, 500 ), ServerConf.World.MAX_STEPS )
-		assertEquals( listOf( 50, 100, 150, 200, 300 ), ServerConf.World.DENSITY_STEPS )
-		assertEquals( listOf( 50, 100, 150, 200, 300 ), ServerConf.World.MONSTER_STEPS )
-		assertEquals( listOf( 1, 2, 3, 5, 10 ), ServerConf.World.RESPAWN_STEPS )
+		assertEquals( listOf( 50, 100, 200, 300, 500 ), ServerSettings.MAX_AI_STEPS )
+		assertEquals( listOf( 50, 100, 150, 200, 300 ), ServerSettings.DENSITY_STEPS )
+		assertEquals( listOf( 50, 100, 150, 200, 300 ), ServerSettings.MONSTER_STEPS )
+		assertEquals( listOf( 1, 2, 3, 5, 10 ), ServerSettings.RESPAWN_STEPS )
 	}
 
 	/** The ranges in the server's battle config table (src/custom/battle_config_init.inc): out of range is ignored. */
 	@Test fun everyWorldStepIsInTheServersRange() {
-		assertTrue( ServerConf.World.MAX_STEPS.all { it in 1..30000 } )
-		assertTrue( ServerConf.World.DENSITY_STEPS.all { it in 10..300 } )
-		assertTrue( ServerConf.World.MONSTER_STEPS.all { it >= 0 } )
-		assertTrue( ServerConf.World.RESPAWN_STEPS.all { 100 / it >= 0 } )
+		assertTrue( ServerSettings.MAX_AI_STEPS.all { it in 1..30000 } )
+		assertTrue( ServerSettings.DENSITY_STEPS.all { it in 10..300 } )
+		assertTrue( ServerSettings.MONSTER_STEPS.all { it >= 0 } )
+		assertTrue( ServerSettings.RESPAWN_STEPS.all { 100 / it >= 0 } )
 	}
 
-	@Test fun savedWorldReadsBack() {
-		val world = ServerConf.World( ai = false, maxShells = 50, density = 300, monsters = 150, respawn = 5 )
-		assertEquals( world, ServerConf.World.from( world.toMap() ) )
+	/** Saved as the app saved them before the settings had tabs: the same stores and keys, so old picks carry over. */
+	@Test fun picksSavedBeforeTheTabsReadBack() {
+		val values = ServerSettings.read( mapOf(
+			"rates" to mapOf( "base_exp" to 25, "job_exp" to 50, "drop" to 3, "card" to 1 ),
+			"world" to mapOf( "ai" to false, "max_shells" to 50, "density" to 300, "monsters" to 150, "respawn" to 5 ),
+			"helpers" to mapOf( "warper" to false, "healer" to true ),
+		) )
+		assertEquals( 25, values[ServerSettings.BASE_EXP] )
+		assertEquals( 50, values[ServerSettings.JOB_EXP] )
+		assertEquals( 3, values[ServerSettings.ITEM_DROPS] )
+		assertEquals( 1, values[ServerSettings.CARD_DROPS] )
+		assertEquals( false, values[ServerSettings.AI] )
+		assertEquals( 50, values[ServerSettings.MAX_AI] )
+		assertEquals( 300, values[ServerSettings.DENSITY] )
+		assertEquals( 150, values[ServerSettings.MONSTERS] )
+		assertEquals( 5, values[ServerSettings.RESPAWN] )
+		assertEquals( 1, values[ServerSettings.QUEST_EXP] )
+		assertEquals( false, values[ServerSettings.SKIP_TELEPORT_MENU] )
+		assertEquals( listOf( true, false, true, true, true ), ServerSettings.NPCS.map { values[it] } )
 	}
 
-	@Test fun aWorldPickOffTheStepsReadsAsDefault() {
-		val saved = mapOf( "max_shells" to 7, "density" to 999, "monsters" to "x", "respawn" to 4 )
-		assertEquals( ServerConf.World(), ServerConf.World.from( saved ) )
+	@Test fun aPickOffTheStepsReadsAsDefault() {
+		val values = ServerSettings.read( mapOf(
+			"rates" to mapOf( "base_exp" to 7 ),
+			"world" to mapOf( "max_shells" to 7, "density" to 999, "monsters" to "x", "respawn" to 4 ),
+		) )
+		assertEquals( defaults, values )
 	}
 
 	@Test fun officialRatesWriteOneHundredEverywhere() {
-		val conf = parse( ServerConf.battleFile( ServerConf.Rates(), ServerConf.World() ) )
-		assertEquals( "100", conf["base_exp_rate"] )
-		assertEquals( "100", conf["job_exp_rate"] )
-		assertEquals( "100", conf["mvp_exp_rate"] )
-		for( key in dropKeys + cardKeys )
+		val conf = battle( defaults )
+		for( key in listOf( "base_exp_rate", "job_exp_rate", "mvp_exp_rate", "quest_exp_rate" ) + dropKeys + cardKeys )
 			assertEquals( key, "100", conf[key] )
 	}
 
 	@Test fun eachRateGoesToItsOwnKeys() {
-		val conf = parse( ServerConf.battleFile( ServerConf.Rates( baseExp = 10, jobExp = 3, drop = 5, card = 1000 ), ServerConf.World() ) )
+		val conf = battle( defaults
+			.with( ServerSettings.BASE_EXP, 10 ).with( ServerSettings.JOB_EXP, 3 ).with( ServerSettings.QUEST_EXP, 25 )
+			.with( ServerSettings.ITEM_DROPS, 5 ).with( ServerSettings.CARD_DROPS, 1000 ) )
 		assertEquals( "1000", conf["base_exp_rate"] )
 		assertEquals( "1000", conf["mvp_exp_rate"] )
 		assertEquals( "300", conf["job_exp_rate"] )
+		assertEquals( "2500", conf["quest_exp_rate"] )
 		for( key in dropKeys )
 			assertEquals( key, "500", conf[key] )
 		for( key in cardKeys )
 			assertEquals( key, "100000", conf[key] )
 	}
 
+	@Test fun quickTeleportSkipsTheLevelOneMenu() {
+		assertEquals( "1", battle( defaults.with( ServerSettings.SKIP_TELEPORT_MENU, true ) )["skip_teleport_lv1_menu"] )
+	}
+
 	/** Every key written is one the server's own battle confs set (a typo would be ignored by rAthena, silently). */
 	@Test fun everyKeyIsARealSetting() {
 		val battle = File( "../../server/conf/battle" )
-		val known = listOf( "exp.conf", "drops.conf", "population_engine.conf", "monster.conf" )
+		val known = listOf( "exp.conf", "drops.conf", "population_engine.conf", "monster.conf", "skill.conf" )
 			.flatMap { parse( File( battle, it ).readText() ).keys }.toSet()
-		val written = parse( ServerConf.battleFile( ServerConf.Rates( 2, 2, 2, 2 ), ServerConf.World() ) ).keys
-		assertEquals( 3 + dropKeys.size + cardKeys.size + worldKeys.size, written.size )
+		val written = parse( ServerConf.battleFile( defaults ) ).keys
+		assertEquals( 4 + dropKeys.size + cardKeys.size + worldKeys.size + 1, written.size )
 		for( key in written )
 			assertTrue( key, key in known )
 	}
 
-	@Test fun noSavedPicksMeanOfficialRates() {
-		assertEquals( ServerConf.Rates(), ServerConf.Rates.from( emptyMap<String, Any>() ) )
+	/** Each setting saves under its own key of its store: none overwrites another's pick. */
+	@Test fun noTwoSettingsShareAKey() {
+		val keys = ServerSettings.all.map { it.store to it.key }
+		assertEquals( keys.distinct(), keys )
 	}
 
-	@Test fun savedPicksReadBack() {
-		val rates = ServerConf.Rates( baseExp = 25, jobExp = 50, drop = 3, card = 1 )
-		assertEquals( rates, ServerConf.Rates.from( rates.toMap() ) )
+	@Test fun rateStepsGoFromOneToAThousand() {
+		assertEquals( listOf( 1, 2, 3, 5, 10, 25, 50, 100, 250, 500, 1000 ), ServerSettings.RATE_STEPS )
 	}
 
-	@Test fun aRateOffTheStepsReadsAsOfficial() {
-		assertEquals( 1, ServerConf.Rates.from( mapOf( "base_exp" to 7 ) ).baseExp )
+	@Test fun everyStepDefaultIsOneOfItsSteps() {
+		for( setting in ServerSettings.all.filterIsInstance<ServerSettings.Step>() )
+			assertTrue( setting.key, setting.default in setting.steps )
 	}
 
-	@Test fun stepsGoFromOneToAThousand() {
-		assertEquals( listOf( 1, 2, 3, 5, 10, 25, 50, 100, 250, 500, 1000 ), ServerConf.Rates.STEPS )
+	@Test fun allNpcsOnWritesNoDelnpc() {
+		assertTrue( ServerConf.helpersFile( defaults ).lines().none { it.startsWith( "delnpc:" ) } )
 	}
 
-	@Test fun allHelpersOnWritesNoDelnpc() {
-		assertTrue( ServerConf.helpersFile( emptySet() ).lines().none { it.startsWith( "delnpc:" ) } )
-	}
-
-	@Test fun eachHelperOffBecomesADelnpcLine() {
-		val lines = ServerConf.helpersFile( setOf( ServerConf.Helper.JOB_MASTER, ServerConf.Helper.HEALER ) )
+	@Test fun eachNpcOffBecomesADelnpcLine() {
+		val ( jobMaster, _, healer ) = ServerSettings.NPCS
+		val lines = ServerConf.helpersFile( defaults.with( jobMaster, false ).with( healer, false ) )
 			.lines().filter { it.startsWith( "delnpc:" ) }
 		assertEquals( listOf( "delnpc: npc/custom/jobmaster.txt", "delnpc: npc/custom/healer.txt" ), lines )
 	}
@@ -138,9 +160,9 @@ class ServerConfTest {
 		val conf = File( "../../server/npc/scripts_custom.conf" ).readLines().map { it.substringBefore( "//" ).trim() }
 		val offAt = conf.indexOf( "import: npc/nostalre_off.conf" )
 		assertTrue( "scripts_custom.conf imports npc/nostalre_off.conf", offAt >= 0 )
-		for( helper in ServerConf.Helper.entries ) {
-			val at = conf.indexOf( "npc: npc/custom/${helper.file}.txt" )
-			assertTrue( helper.file, at in 0 until offAt )
+		for( npc in ServerSettings.NPCS ) {
+			val at = conf.indexOf( "npc: npc/custom/${npc.file}.txt" )
+			assertTrue( npc.file, at in 0 until offAt )
 		}
 	}
 }
