@@ -73,9 +73,29 @@ class EnglishImportTest {
 		assertFalse( target.exists() )
 	}
 
+	@Test fun aTranslationTheTablesCannotBeMadeFromWritesNothing() {
+		val source = tmp.newFolder( "source" )
+		fun file( path: String, text: String ) = File( source, path ).apply {
+			parentFile.mkdirs()
+			writeText( text )
+		}
+		file( "Translation/Renewal/data/msgstringtable.txt", "Hello#\n" )
+		file( "Translation/Pre-Renewal/data/lua files/skillinfoz/skilldescript.lub", "SKILL_DESCRIPT = {" )
+		file( "Translation/Renewal/data/luafiles514/lua files/skillinfoz/skillinfolist.lub", "SKILL_INFO_LIST = {}" )
+		val target = File( tmp.root, "data" )
+		val listing = source.walkTopDown().filter { it.isFile }.map { it.relativeTo( source ).invariantSeparatorsPath }.toList()
+		try {
+			EnglishImport.build( listing, source, tmp.newFolder( "db" ), target, luac )
+			fail( "built from a table that does not close" )
+		} catch( e: IllegalArgumentException ) {
+			assertEquals( "table not closed", e.message )
+		}
+		assertFalse( target.exists() )
+	}
+
 	/**
 	 * The whole import against scripts/import-english.py's output for the same translation, both with the host's
-	 * luac 5.1: ENGLISH_CHECKOUT, a ROenglishRE checkout at [EnglishText.COMMIT] with Translation/Compatibility on
+	 * luac 5.1: ENGLISH_CHECKOUT, a ROenglishRE checkout (any commit) with Translation/Compatibility on
 	 * disk, and ENGLISH_EXPECTED, the game folder the script wrote into (luac5.1 on its PATH). Skipped without them.
 	 */
 	@Test fun matchesThePcScript() {

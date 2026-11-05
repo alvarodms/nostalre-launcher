@@ -44,30 +44,32 @@ object EnglishImport {
 	/**
 	 * The English text into [target] (the game folder's data/): the translation's files, read from [source] (a
 	 * folder holding at least [files] of [listing] by path), then the tables made from them and from rAthena's db
-	 * ([rathenaDb], the servers' db/re), and the item table compiled with [luac] (Lua 5.1's). The compiling goes
-	 * first: when it fails, nothing is written.
+	 * ([rathenaDb], the servers' db/re) over them, the item table compiled with [luac] (Lua 5.1's). The tables are
+	 * made first, in a temporary folder: when the translation has changed in a way they cannot be made from, nothing is
+	 * written.
 	 */
 	fun build( listing: Collection<String>, source: File, rathenaDb: File, target: File, luac: File ) {
-		val itemInfo = compileItemInfo( source, luac )
+		val tables = kotlin.io.path.createTempDirectory( "english" ).toFile()
 		try {
+			compileItemInfo( source, luac, File( tables, ITEM_INFO_EN ) )
+			writeItemTables( source, rathenaDb, tables )
+			writeRathenaTables( rathenaDb, tables )
+			writeSkillTables( source, rathenaDb, tables )
+
 			target.mkdirs()
 			val root = target.canonicalFile
-			for( ( path, relative ) in copies( listing ) ) {
+			fun copy( from: File, relative: String ) {
 				val dest = File( root, relative )
 				require( dest.canonicalPath.startsWith( root.path + File.separator ) ) { "refusing path outside $target: $relative" }
 				dest.parentFile?.mkdirs()
-				File( source, path ).copyTo( dest, overwrite = true )
+				from.copyTo( dest, overwrite = true )
 			}
-			writeItemTables( source, rathenaDb, root )
-			writeRathenaTables( rathenaDb, root )
-			if( itemInfo != null ) {
-				val dest = File( root, ITEM_INFO_EN )
-				dest.parentFile?.mkdirs()
-				itemInfo.copyTo( dest, overwrite = true )
-			}
-			writeSkillTables( source, rathenaDb, root )
+			for( ( path, relative ) in copies( listing ) )
+				copy( File( source, path ), relative )
+			for( table in tables.walkTopDown().filter { it.isFile } )
+				copy( table, table.relativeTo( tables ).invariantSeparatorsPath )
 		} finally {
-			itemInfo?.delete()
+			tables.deleteRecursively()
 		}
 	}
 
@@ -151,22 +153,20 @@ object EnglishImport {
 	}
 
 	/**
-	 * The translation's Renewal itemInfo.lua compiled, for data/…/iteminfo_en.lub (the items kRO's own iteminfo lacks;
-	 * the game reads iteminfo compiled only), as a temporary file; null without it.
+	 * The translation's Renewal itemInfo.lua compiled into [compiled], data/…/iteminfo_en.lub: the items kRO's own
+	 * iteminfo lacks (the game reads iteminfo compiled only). Nothing without it.
 	 */
-	private fun compileItemInfo( source: File, luac: File ): File? {
+	private fun compileItemInfo( source: File, luac: File, compiled: File ) {
 		val file = File( source, RENEWAL + ITEM_INFO )
 		if( !file.exists() )
-			return null
-		val compiled = File.createTempFile( "iteminfo_en", ".lub" )
+			return
+		compiled.parentFile?.mkdirs()
 		val log = File.createTempFile( "luac", ".log" )
-		compiled.delete()
 		try {
 			runLuac( luac, file, compiled, log )
 		} finally {
 			log.delete()
 		}
-		return compiled
 	}
 
 	private fun runLuac( luac: File, file: File, compiled: File, log: File ) {

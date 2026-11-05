@@ -136,42 +136,82 @@ class SettingsScreen(
 		}
 	}
 
+	/** The translation's newest commit, as GitHub gave it when the screen opened (or as an install just took it). */
+	private sealed class Latest {
+		object Checking : Latest()
+		data class Known( val commit: String ) : Latest()
+		data class Unknown( val reason: String ) : Latest()
+	}
+
 	/**
-	 * English text: Download, Update or Again, and below it where it stands (the run's progress, what went wrong, what
-	 * is installed).
+	 * English text: Download when there is none from the app, else Update, greyed until GitHub has a newer commit of
+	 * the translation than the one installed; below it where it stands (the run's progress, what went wrong, what is
+	 * installed and whether a newer one is out).
 	 */
 	private fun englishRow(): View {
 		val status = Ui.text( context, 12f, Ui.DIM )
+		var latest: Latest = Latest.Checking
+		var enabled = false
+		var last: EnglishText.State = EnglishText.State.Idle
 		val action = Ui.text( context, 14f ).apply {
 			gravity = Gravity.CENTER
 			isFocusable = true
 			isClickable = true
 			pad( context, 16f, 0f )
 			onFocus( ENGLISH_HELP )
-			setOnClickListener { gameDir?.let { EnglishText.start( context, it ) } }
+			setOnClickListener { if( enabled ) gameDir?.let { EnglishText.start( context, it ) } }
 		}
 		fun show( state: EnglishText.State ) {
-			val installed = gameDir?.let { EnglishText.installed( it ) } ?: EnglishText.Installed.NONE
-			val version = "ROenglishRE ${EnglishText.COMMIT.take( 7 )}"
+			val installed = gameDir?.let { EnglishText.installed( it ) } ?: EnglishText.Installed.None
+			val app = installed as? EnglishText.Installed.App
+			val newer = ( latest as? Latest.Known )?.commit?.takeIf { app != null && it != app.commit }
+			val working = state is EnglishText.State.Working
+			enabled = gameDir != null && !working && ( app == null || newer != null )
 			action.text = when {
-				state is EnglishText.State.Working -> "…"
-				installed == EnglishText.Installed.CURRENT -> "Again"
-				installed == EnglishText.Installed.OLDER -> "Update"
+				working -> "…"
+				app != null -> "Update"
 				else -> "Download"
 			}
-			action.background = Ui.choice( context, state !is EnglishText.State.Working && installed != EnglishText.Installed.CURRENT )
+			action.background = Ui.choice( context, enabled )
+			action.alpha = if( enabled ) 1f else 0.35f
+			val failed = ( state as? EnglishText.State.Failed )?.let { if( app == null ) "Not installed: ${it.message}." else "Not updated: ${it.message}." }
+			val standing = when( installed ) {
+				is EnglishText.Installed.App -> {
+					val version = "Installed: ROenglishRE ${installed.commit.take( 7 )}"
+					when( val known = latest ) {
+						Latest.Checking -> "$version. Checking for a newer translation…"
+						is Latest.Known -> if( newer != null ) "$version. A newer translation is out (${newer.take( 7 )})." else "$version, the newest translation."
+						is Latest.Unknown -> "$version. Couldn't check for a newer one: ${known.reason}."
+					}
+				}
+				EnglishText.Installed.Other -> "Set up outside the app. Download to replace it with the newest translation."
+				EnglishText.Installed.None -> if( failed != null ) null else "The game's text is in Korean. Download the English translation (about 100 MB)."
+			}
 			status.text = when {
 				gameDir == null -> "Choose a game folder first."
 				state is EnglishText.State.Working -> state.message
-				state is EnglishText.State.Failed -> "Not installed: ${state.message}."
-				installed == EnglishText.Installed.CURRENT -> "Installed: $version."
-				installed == EnglishText.Installed.OLDER -> "An older translation is installed. Update to $version."
-				installed == EnglishText.Installed.OTHER -> "Set up outside the app. Download to replace it with $version."
-				else -> "The game's text is in Korean. Download the English translation (about 106 MB)."
+				else -> listOfNotNull( failed, standing ).joinToString( " " )
 			}
 			update()
 		}
-		stopListening = EnglishText.listen { state -> status.post { show( state ) } }
+		// installed from the app: whether the translation has moved since, asked of GitHub once per opening
+		if( gameDir?.let { EnglishText.installed( it ) } is EnglishText.Installed.App )
+			thread( name = "english-latest" ) {
+				val result = runCatching { EnglishText.latest() }
+				status.post {
+					latest = result.fold( { Latest.Known( it ) }, { Latest.Unknown( it.message ?: it.javaClass.simpleName ) } )
+					show( EnglishText.state )
+				}
+			}
+		stopListening = EnglishText.listen { state ->
+			status.post {
+				// an install just finished: what it installed is the newest there is
+				if( last is EnglishText.State.Working && state is EnglishText.State.Idle )
+					( gameDir?.let { EnglishText.installed( it ) } as? EnglishText.Installed.App )?.let { latest = Latest.Known( it.commit ) }
+				last = state
+				show( state )
+			}
+		}
 		return LinearLayout( context ).apply {
 			orientation = LinearLayout.VERTICAL
 			addView( row( "English text" ).apply {
@@ -284,7 +324,8 @@ class SettingsScreen(
 
 	private companion object {
 		const val DEFAULT_HELP = "Pick how the game's server plays. Your characters keep everything when it restarts."
-		const val ENGLISH_HELP = "ROenglishRE, llchrisll's English translation, downloaded from GitHub into your game " +
-			"folder's data/ (about 106 MB). It goes on if you leave this screen; in use from your next game."
+		const val ENGLISH_HELP = "ROenglishRE, llchrisll's English translation: its newest version, downloaded from GitHub " +
+			"into your game folder's data/ (about 100 MB). Update lights up when the translation has changed since. It goes " +
+			"on if you leave this screen; in use from your next game."
 	}
 }

@@ -142,9 +142,10 @@ That is all: the app finds the archives by itself and tells you if something is 
 ### English text
 
 kRO's data is in Korean. The app sets up the English text itself: in *Settings* (Start in the character list),
-*Game text*, choose *Download*. It downloads the [ROenglishRE](https://github.com/llchrisll/ROenglishRE) translation
-from GitHub (about 106 MB, once) and writes it into the game folder's `data/`, from the next game on. The app installs
-one tested version of the translation; when a newer app moves to a newer one, the same row offers *Update*.
+*Game text*, choose *Download*. It downloads the newest [ROenglishRE](https://github.com/llchrisll/ROenglishRE)
+translation from GitHub (about 100 MB) and writes it into the game folder's `data/`, from the next game on. Each time
+*Settings* opens, the app asks GitHub whether the translation has changed since: *Update* lights up when it has, and
+stays greyed out when it has not.
 
 On a PC instead, a script writes the same files (Python 3 with PyYAML, and `luac5.1`; without one,
 `scripts/build-luac.sh host` builds it as `out/host/bin/luac`):

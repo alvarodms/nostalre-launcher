@@ -15,15 +15,14 @@ import kotlin.concurrent.thread
 
 /**
  * The English text, set up from the app: ROenglishRE (llchrisll's English translation, which has no license, so the
- * APK cannot carry it) downloaded from GitHub at [COMMIT] and written into the game folder's data/ by
- * [EnglishImport], as scripts/import-english.py does on a PC, with the luac the APK carries (libluac.so). One run at a time, on its own thread, which goes on
- * when the screen that started it closes; [listen] follows it. The files wait in the cache until the run finishes, so
- * a run cut short picks up where it stopped.
+ * APK cannot carry it) downloaded from GitHub at its newest commit ([latest]) and written into the game folder's data/
+ * by [EnglishImport], as scripts/import-english.py does on a PC, with the luac the APK carries (libluac.so). The
+ * commit installed is kept beside it ([installed]), so a newer one can be offered. One run at a time, on its own
+ * thread, which goes on when the screen that started it closes; [listen] follows it. The files wait in the cache
+ * until the run finishes, so a run cut short picks up where it stopped (when the translation has not moved since).
  */
 object EnglishText {
 	const val REPO = "llchrisll/ROenglishRE"
-	/** The translation's commit the app installs: moved by hand, once the import is checked against it. */
-	const val COMMIT = "4a4abafd3fc6e360b57b41c297e9f9340fc66a26"
 	/** In data/: the commit the app installed there. */
 	private const val MARKER = ".nostalre-english"
 	/** A table only the English import writes, the app's or the PC script's. */
@@ -40,7 +39,14 @@ object EnglishText {
 		data class Failed( val message: String ) : State()
 	}
 
-	enum class Installed { CURRENT, OLDER, OTHER, NONE }
+	/** What the game folder's data/ holds. */
+	sealed class Installed {
+		/** The English text this app installed, of the translation's [commit]. */
+		data class App( val commit: String ) : Installed()
+		/** English text the app did not write (scripts/import-english.py on a PC). */
+		object Other : Installed()
+		object None : Installed()
+	}
 
 	@Volatile var state: State = State.Idle
 		private set
@@ -51,16 +57,25 @@ object EnglishText {
 
 	private val listeners = CopyOnWriteArrayList<( State ) -> Unit>()
 
-	/** What the game folder's data/ holds: this app's [COMMIT], an older one, English the app did not write, none. */
 	fun installed( gameDir: File ): Installed {
 		val data = File( gameDir, "data" )
 		val commit = runCatching { File( data, MARKER ).readText().trim() }.getOrNull()
 		return when {
-			commit == COMMIT -> Installed.CURRENT
-			commit != null -> Installed.OLDER
-			File( data, IMPORTED ).isFile -> Installed.OTHER
-			else -> Installed.NONE
+			!commit.isNullOrEmpty() -> Installed.App( commit )
+			File( data, IMPORTED ).isFile -> Installed.Other
+			else -> Installed.None
 		}
+	}
+
+	/**
+	 * The translation's newest commit, the head of its default branch: one call to GitHub's API, of the 60 an hour it
+	 * allows without an account. Blocks: not on the main thread. Throws when GitHub cannot be asked.
+	 */
+	fun latest(): String {
+		val sha = String( get( "https://api.github.com/repos/$REPO/commits/HEAD", "application/vnd.github.sha" ), Charsets.US_ASCII ).trim()
+		if( !Regex( "[0-9a-f]{40}" ).matches( sha ) )
+			throw IOException( "GitHub sent no commit" )
+		return sha
 	}
 
 	/** [listener] now with the current state, then with each change, on the run's thread; the returned call stops it. */
@@ -86,12 +101,14 @@ object EnglishText {
 	}
 
 	private fun install( context: Context, gameDir: File ) {
+		update( State.Working( "Looking for the newest translation…" ) )
+		val commit = latest()
 		val cache = File( context.cacheDir, "english" )
-		cache.listFiles()?.filter { it.name != COMMIT }?.forEach { it.deleteRecursively() } // an older commit's
-		val staging = File( cache, COMMIT )
+		cache.listFiles()?.filter { it.name != commit }?.forEach { it.deleteRecursively() } // another commit's
+		val staging = File( cache, commit )
 
 		update( State.Working( "Listing the translation's files…" ) )
-		val blobs = listing()
+		val blobs = listing( commit )
 		val files = EnglishImport.files( blobs.keys )
 		val total = files.sumOf { blobs.getValue( it ).size }
 		if( context.cacheDir.usableSpace < total + 50 * MB || gameDir.usableSpace < total + 50 * MB )
@@ -107,7 +124,7 @@ object EnglishText {
 		progress( 0 )
 		val pool = Executors.newFixedThreadPool( THREADS )
 		try {
-			files.map { path -> pool.submit { fetch( path, blobs.getValue( path ), File( staging, path ) ); progress( blobs.getValue( path ).size ) } }
+			files.map { path -> pool.submit { fetch( commit, path, blobs.getValue( path ), File( staging, path ) ); progress( blobs.getValue( path ).size ) } }
 				.forEach { it.get() }
 		} catch( e: ExecutionException ) {
 			throw e.cause ?: e
@@ -119,15 +136,15 @@ object EnglishText {
 		val data = File( gameDir, "data" )
 		val paths = Paths( context )
 		EnglishImport.build( blobs.keys, staging, File( paths.server, "db/re" ), data, File( paths.bin, "libluac.so" ) )
-		File( data, MARKER ).writeText( "$COMMIT\n" )
+		File( data, MARKER ).writeText( "$commit\n" )
 		cache.deleteRecursively()
 	}
 
 	private class Blob( val sha: String, val size: Long )
 
-	/** Every file of the translation at [COMMIT]: one call to GitHub's API, of the 60 an hour it allows without an account. */
-	private fun listing(): Map<String, Blob> {
-		val json = JSONObject( String( get( "https://api.github.com/repos/$REPO/git/trees/$COMMIT?recursive=1" ), Charsets.UTF_8 ) )
+	/** Every file of the translation at [commit]: one call to GitHub's API. */
+	private fun listing( commit: String ): Map<String, Blob> {
+		val json = JSONObject( String( get( "https://api.github.com/repos/$REPO/git/trees/$commit?recursive=1" ), Charsets.UTF_8 ) )
 		if( json.optBoolean( "truncated" ) )
 			throw IOException( "GitHub sent part of the file list only" )
 		val tree = json.getJSONArray( "tree" )
@@ -137,13 +154,13 @@ object EnglishText {
 	}
 
 	/** [path] into [dest], unless an earlier run left it there whole; checked against its git hash. */
-	private fun fetch( path: String, blob: Blob, dest: File ) {
+	private fun fetch( commit: String, path: String, blob: Blob, dest: File ) {
 		if( dest.isFile && dest.length() == blob.size && gitHash( dest.readBytes() ) == blob.sha )
 			return
 		var failure: IOException? = null
 		repeat( ATTEMPTS ) {
 			try {
-				val bytes = get( raw( path ) )
+				val bytes = get( raw( commit, path ) )
 				if( gitHash( bytes ) != blob.sha )
 					throw IOException( "$path came damaged" )
 				dest.parentFile?.mkdirs()
@@ -159,7 +176,7 @@ object EnglishText {
 		throw failure!!
 	}
 
-	private fun raw( path: String ) = "https://raw.githubusercontent.com/$REPO/$COMMIT/" + buildString {
+	private fun raw( commit: String, path: String ) = "https://raw.githubusercontent.com/$REPO/$commit/" + buildString {
 		for( byte in path.toByteArray( Charsets.UTF_8 ) ) {
 			val c = byte.toInt() and 0xff
 			if( c < 0x80 && ( c.toChar().isLetterOrDigit() || c.toChar() in "-._~/" ) )
@@ -169,16 +186,17 @@ object EnglishText {
 		}
 	}
 
-	private fun get( url: String ): ByteArray {
+	private fun get( url: String, accept: String? = null ): ByteArray {
 		val connection = ( URL( url ).openConnection() as HttpURLConnection ).apply {
 			connectTimeout = CONNECT_TIMEOUT_MS
 			readTimeout = READ_TIMEOUT_MS
 			setRequestProperty( "User-Agent", "nostalRE-launcher" )
+			accept?.let { setRequestProperty( "Accept", it ) }
 		}
 		try {
 			when( val code = connection.responseCode ) {
 				200 -> return connection.inputStream.use { it.readBytes() }
-				403, 429 -> throw IOException( "GitHub is limiting downloads from this network. Try again in an hour" )
+				403, 429 -> throw IOException( "GitHub is limiting requests from this network. Try again in an hour" )
 				else -> throw IOException( "GitHub answered $code for $url" )
 			}
 		} catch( e: IOException ) {
