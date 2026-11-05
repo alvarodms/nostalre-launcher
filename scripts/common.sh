@@ -14,7 +14,12 @@ PACKETVER=20250716
 ANDROID_API=26
 ANDROID_ABI=arm64-v8a
 NDK="${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/30.0.16248370}"
-NDK_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+# the NDK's prebuilt tools for the build machine: macOS's are darwin-x86_64 (universal, Apple silicon included)
+case "$(uname -s)" in
+	Darwin) NDK_HOST=darwin-x86_64 ;;
+	*) NDK_HOST=linux-x86_64 ;;
+esac
+NDK_BIN="$NDK/toolchains/llvm/prebuilt/$NDK_HOST/bin"
 # skill spam test: one cast every this many ms
 SKILL_SPAM_CAST_MS=800
 

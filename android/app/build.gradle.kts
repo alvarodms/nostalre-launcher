@@ -11,6 +11,10 @@ val stage = rootProject.file( "../out/build/apk" )
 fun key( name: String ) = providers.gradleProperty( name ).orNull
 val releaseStore = key( "NOSTALRE_STORE_FILE" )
 
+// -PnostalreSide (scripts/build-apk.sh --side): a test build beside the installed app, its own package and name, so
+// its own characters and settings
+val side = providers.gradleProperty( "nostalreSide" ).isPresent
+
 android {
 	namespace = "io.github.siklyde.nostalre"
 	compileSdk = 34
@@ -23,6 +27,8 @@ android {
 		versionCode = 7
 		versionName = "0.2.1"
 		ndk { abiFilters += "arm64-v8a" }
+		if( side ) applicationIdSuffix = ".test"
+		manifestPlaceholders[ "appName" ] = if( side ) "nostalRE Test" else "@string/app_name"
 	}
 
 	signingConfigs {
