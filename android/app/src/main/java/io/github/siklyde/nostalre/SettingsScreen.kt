@@ -19,9 +19,9 @@ import kotlin.concurrent.thread
 /**
  * The hub's settings, a screen like character creation's, in tabs: the server's ([ServerSettings.categories]: rates,
  * monsters, AI players, character, loot, skills, NPCs), then the app's own (GM commands, [Account]; the English text,
- * [EnglishText]; the logs and the graphics trace, [Diagnostics]). Server settings save when the screen closes, [onClose]
- * told to restart the servers (with them, or with new English text, which grf-server reads at its start); GM commands
- * and the trace save at once, the English text installs and the logs copy on their own threads.
+ * [EnglishText]; the logs, [Diagnostics]). Server settings save when the screen closes, [onClose] told to restart the
+ * servers (with them, or with new English text, which grf-server reads at its start); GM commands save at once, the
+ * English text installs and the logs copy on their own threads.
  *
  * Controller: L1/R1 change tab, the D-pad goes up and down the rows and left and right changes the one it is on, A sets
  * it, Y puts the tab's settings back to the official ones, X leaves without saving, B or Start saves and goes back
@@ -35,7 +35,6 @@ class SettingsScreen(
 	private val saved = ServerSettings.load( context )
 	private var draft = saved
 	private var gm = isGm
-	private var trace = Diagnostics.tracing( context )
 	private val gameDir = GameDir.get( context )
 	private val englishBefore = EnglishText.finished
 	private var stopListening: () -> Unit = {}
@@ -55,7 +54,7 @@ class SettingsScreen(
 	private val tabs = ServerSettings.categories.map { Tab( it.title, it.about, it.settings, true ) } + listOf(
 		Tab( "Account", "Your account on the app's server.", emptyList(), false ),
 		Tab( "Game Text", "The language of the game's own text.", emptyList(), false ),
-		Tab( "Diagnostics", "For a bug report: the game's logs, and more in them.", emptyList(), false ),
+		Tab( "Diagnostics", "For a bug report: the game's and the servers' logs.", emptyList(), false ),
 	)
 	private var current = 0
 
@@ -84,7 +83,7 @@ class SettingsScreen(
 				tab.title == "Account" -> listOf( toggleRow( "GM commands", "@ commands in chat, like @warp and @item. Saved now; from your next game.",
 					{ gm } ) { setGm( it ) } )
 				tab.title == "Game Text" -> listOf( englishRow() )
-				else -> listOf( saveLogsRow(), toggleRow( "Graphics trace", TRACE_HELP, { trace } ) { setTrace( it ) } )
+				else -> listOf( saveLogsRow() )
 			}
 			wire( tab.rows )
 			tab.page = page( tab.rows, if( tab.restarts ) RESTART_NOTE else null )
@@ -349,16 +348,6 @@ class SettingsScreen(
 		}
 	}
 
-	/** The graphics trace goes to env.txt at once, for the next game. */
-	private fun setTrace( on: Boolean ) {
-		trace = on
-		if( runCatching { Diagnostics.setTracing( context, on ) }.isFailure ) {
-			trace = !on
-			refresh()
-			help.text = "The graphics trace was not saved: env.txt could not be written."
-		}
-	}
-
 	/** Save logs: copies them to Download on its own thread; below, where they went or why they did not. */
 	private fun saveLogsRow(): Row {
 		val status = Ui.text( context, 12f, Ui.DIM ).apply { text = "Nothing saved yet." }
@@ -505,10 +494,7 @@ class SettingsScreen(
 		const val ENGLISH_HELP = "ROenglishRE, llchrisll's English translation: its newest version, downloaded from GitHub " +
 			"into your game folder's data/ (about 100 MB). Update lights up when the translation has changed since. It goes " +
 			"on if you leave this screen; in use from your next game."
-		const val SAVE_LOGS_HELP = "Copies the game's log, env.txt and the servers' logs to Download, a folder per save, " +
+		const val SAVE_LOGS_HELP = "Copies the game's log and the servers' logs to Download, a folder per save, " +
 			"for a file manager to open or share. The game's log is the last game's: save it before you play again."
-		const val TRACE_HELP = "The game's log gets a line a second of what the frames hand the GPU, a line for each " +
-			"frame that loses every sprite, and the graphics driver's own messages. From your next game; turn it off " +
-			"when you are done, as the log grows."
 	}
 }
