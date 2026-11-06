@@ -43,7 +43,19 @@ object NativeGame {
 			put( "password", Account.PASSWORD )
 			put( "char_id", charId )
 		} )
+		teleportPicksLevel( config )
 		file.writeText( config.toString( 2 ) )
+	}
+
+	/**
+	 * Teleport picks its level, as Heal does, so Lv 1 can sit on the skill bar beside Lv 2. The client saves it off,
+	 * so it is set at every launch. Whether Lv 1 asks first is the server's Quick Teleport Lv 1 (Settings, Skills).
+	 */
+	private fun teleportPicksLevel( config: JSONObject ) {
+		val custom = config.optJSONObject( "custom" ) ?: JSONObject().also { config.put( "custom", it ) }
+		val skill = custom.optJSONObject( "skill" ) ?: JSONObject().also { custom.put( "skill", it ) }
+		val teleport = skill.optJSONObject( "al_teleport" ) ?: JSONObject().also { skill.put( "al_teleport", it ) }
+		teleport.put( "separate_lvl", true )
 	}
 
 	/**
