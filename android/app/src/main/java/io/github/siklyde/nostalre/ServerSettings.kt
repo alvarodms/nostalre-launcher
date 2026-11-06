@@ -107,6 +107,8 @@ object ServerSettings {
 	val REGEN_STEPS = listOf( 1, 2, 3, 5 )
 	/** Death penalty, rAthena's way: 100 is 1% of the EXP. */
 	val DEATH_PENALTY_STEPS = listOf( 0, 25, 50, 100, 200 )
+	/** Pickup area, cells around the item picked up: up to 14, the server's max (about the whole screen). */
+	val PICKUP_AREA_STEPS = listOf( 0, 1, 2, 3, 5, 7, 14 )
 
 	// conf/battle/drops.conf: every item rate but the cards', and the cards'
 	val DROP_KEYS = listOf(
@@ -122,6 +124,7 @@ object ServerSettings {
 	private fun percent( value: Int ) = "$value%"
 	private fun count( value: Int ) = "$value"
 	private fun yesNo( on: Boolean ) = if( on ) 1 else 0
+	private fun square( value: Int ) = if( value == 0 ) "Off" else "${value * 2 + 1}×${value * 2 + 1}"
 	private fun penalty( value: Int ) = if( value == 0 ) "Off" else "${( value / 100.0 ).toString().removeSuffix( ".0" )}%"
 
 	// rAthena's rates are percents, 100 for 1x
@@ -169,6 +172,14 @@ object ServerSettings {
 		"The base and job EXP of your level you lose when you die. Official: 1%.",
 		DEATH_PENALTY_STEPS, 100, ::penalty ) { listOf( "death_penalty_base" to it, "death_penalty_job" to it ) }
 
+	val AUTOLOOT = Toggle( "loot", "autoloot", "Autoloot",
+		"What monsters drop goes straight into your bag. Off: drops fall to the ground for you to pick up. Not for kills by a homunculus or mercenary alone.",
+		true ) { listOf( "item_auto_get" to yesNo( it ) ) }
+	// the server's pickup_area (nostalRE's own): cells each way from the item picked up
+	val PICKUP_AREA = Step( "loot", "pickup_area", "Pickup area",
+		"Picking up one item also picks up every other item in a square around it, as long as you can carry them. 29×29 is about the whole screen.",
+		PICKUP_AREA_STEPS, 0, ::square ) { listOf( "pickup_area" to it ) }
+
 	val SKIP_TELEPORT_MENU = Toggle( "skills", "skip_teleport_lv1_menu", "Quick Teleport Lv 1",
 		"Teleport Lv 1 takes you somewhere random on the map at once, without asking Random or Cancel first.",
 		false ) { listOf( "skip_teleport_lv1_menu" to yesNo( it ) ) }
@@ -194,6 +205,7 @@ object ServerSettings {
 		Category( "AI Players", "Other adventurers in the world, run by the server.",
 			listOf( AI, MAX_AI, DENSITY, AI_ROUTINE, AI_CHAT, AI_REPLIES, AI_SHOPS ) ),
 		Category( "Character", "How your character recovers, and what dying costs.", listOf( REGEN, DEATH_PENALTY ) ),
+		Category( "Loot", "How drops reach your bag: straight away, or picked up from the ground.", listOf( AUTOLOOT, PICKUP_AREA ) ),
 		Category( "Skills", "Skills as the official game has them, or quicker to use.", listOf( SKIP_TELEPORT_MENU ) ),
 		Category( "NPCs", "The custom NPCs, each on or off: the first ones are on to start with.", NPCS ),
 	)
