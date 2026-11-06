@@ -136,6 +136,23 @@ class ServerConfTest {
 		assertEquals( lines.size, parse( ServerConf.battleFile( defaults ) ).size )
 	}
 
+	@Test fun autolootIsOnUntilTurnedOff() {
+		assertEquals( "1", battle( defaults )["item_auto_get"] )
+		assertEquals( "0", battle( defaults.with( ServerSettings.AUTOLOOT, false ) )["item_auto_get"] )
+	}
+
+	@Test fun pickupAreaIsOffUntilPicked() {
+		assertEquals( "0", battle( defaults )["pickup_area"] )
+		assertEquals( "3", battle( defaults.with( ServerSettings.PICKUP_AREA, 3 ) )["pickup_area"] )
+		assertEquals( listOf( "Off", "3×3", "5×5", "7×7", "11×11", "15×15", "29×29" ),
+			ServerSettings.PICKUP_AREA_STEPS.map( ServerSettings.PICKUP_AREA.format ) )
+	}
+
+	/** pickup_area's range in the server's battle config table (src/custom/battle_config_init.inc). */
+	@Test fun everyPickupAreaIsInTheServersRange() {
+		assertTrue( ServerSettings.PICKUP_AREA_STEPS.all { it in 0..14 } )
+	}
+
 	@Test fun multiLevelUpIsOffUntilTurnedOn() {
 		assertEquals( "0", battle( defaults )["multi_level_up"] )
 		assertEquals( "1", battle( defaults.with( ServerSettings.MULTI_LEVEL_UP, true ) )["multi_level_up"] )

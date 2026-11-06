@@ -18,9 +18,10 @@ import kotlin.concurrent.thread
 
 /**
  * The hub's settings, a screen like character creation's, in tabs: the server's ([ServerSettings.categories]: rates,
- * monsters, AI players, skills, NPCs), then the app's own (GM commands, [Account]; the English text, [EnglishText]).
- * Server settings save when the screen closes, [onClose] told to restart the servers (with them, or with new English
- * text, which grf-server reads at its start); GM commands save at once, the English text installs on its own thread.
+ * monsters, AI players, character, loot, skills, NPCs), then the app's own (GM commands, [Account]; the English text,
+ * [EnglishText]). Server settings save when the screen closes, [onClose] told to restart the servers (with them, or with
+ * new English text, which grf-server reads at its start); GM commands save at once, the English text installs on its
+ * own thread.
  *
  * Controller: L1/R1 change tab, the D-pad goes up and down the rows and left and right changes the one it is on, A sets
  * it, Y puts the tab's settings back to the official ones, X leaves without saving, B or Start saves and goes back
