@@ -196,6 +196,9 @@ object ServerSettings {
 		Npc( "itemmall", "Shop Street", "A street of shops in north Prontera selling weapons, armour and more for zeny.", false ),
 		Npc( "card_remover", "Card Remover", "Wise Old Woman, in a Prontera house: takes cards out of your equipment for zeny. It can fail and break the item.", false ),
 		Npc( "item_signer", "Item Signer", "Perchik, in a Prontera house: writes your name on a rare item, for 3 Gift Boxes and zeny by its refine.", false ),
+		Npc( "booster", "Booster Event",
+			"Booster Registration, in north Prontera: a Booster Call that summons an assistant with daily quests for Booster Coins, and a Booster Equipment NPC that trades coins and tickets for gear.",
+			false ),
 	)
 
 	val categories = listOf(
