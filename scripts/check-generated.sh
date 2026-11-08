@@ -24,6 +24,7 @@ check() {
 check skill-enum.py rust-ro/models/src/enums/skill_enums.rs
 check effect-id.py rust-ro/models/src/enums/effect_id.rs
 check item-tables.py lib/game/src/item_tables.rs
+check package-tables.py lib/game/src/package_tables.rs
 check job-tables.py lib/game/src/job_tables.rs
 check skill-tree.py lib/game/src/skill_tree_tables.rs
 check job-names.py android/app/src/main/java/io/github/siklyde/nostalre/JobNames.kt .
