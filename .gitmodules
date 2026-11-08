@@ -1,6 +1,6 @@
 [submodule "server"]
 	path = server
-	url = https://github.com/si-klyde/rathena-nostalre.git
+	url = https://github.com/alvarodms/rathena-nostalre.git
 	branch = nostalre
 [submodule "client"]
 	path = client
