@@ -17,7 +17,7 @@ for arg in "$@"; do
 done
 
 db="${RA_DB:-$OUT/db/ragnarok.db}"
-sql="$ROOT/server/sql-files"
+sql="$RATHENA/sql-files"
 if [ -f "$db" ] && ! $force; then
 	echo "$db exists, keeping it (--force replaces it, its characters included)" >&2
 	exit 1
@@ -25,7 +25,7 @@ fi
 mkdir -p "$(dirname "$db")"
 rm -f "$db" "$db-wal" "$db-shm"
 
-python3 -I "$ROOT/server/tools/mysql2sqlite.py" \
+python3 -I "$RATHENA/tools/mysql2sqlite.py" \
 	"$sql/main.sql" "$sql/logs.sql" "$sql/web.sql" "$sql/roulette_default_data.sql" \
 	| sqlite3 -bail "$db" >/dev/null
 
