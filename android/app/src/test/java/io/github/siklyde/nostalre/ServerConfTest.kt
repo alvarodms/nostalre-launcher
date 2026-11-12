@@ -167,6 +167,39 @@ class ServerConfTest {
 		assertEquals( listOf( "0", "0", "0", "1", "0" ), aiKeys.map { conf[it] } )
 	}
 
+	@Test fun shopsStartAsTheServerShipsThem() {
+		val conf = battle( defaults )
+		assertEquals( "100", conf["population_engine_vendor_pct"] )
+		assertEquals( "1", conf["population_engine_vendor_towns"] )
+		assertEquals( "100", conf["population_engine_vendor_price_pct"] )
+		assertEquals( "900000", conf["population_engine_vendor_shift_min_ms"] )
+		assertEquals( "2700000", conf["population_engine_vendor_shift_max_ms"] )
+		val kinds = listOf( "loot", "supplies", "gear", "cards" ).map { conf["population_engine_vendor_$it"] }
+		assertEquals( listOf( "1", "1", "1", "0" ), kinds )
+	}
+
+	@Test fun eachShopPickGoesToItsOwnKey() {
+		val conf = battle( defaults
+			.with( ServerSettings.SHOPS_PER_TOWN, 300 ).with( ServerSettings.SHOP_TOWNS, 2 ).with( ServerSettings.SHOP_PRICES, 50 )
+			.with( ServerSettings.SHOP_LOOT, false ).with( ServerSettings.SHOP_SUPPLIES, false ).with( ServerSettings.SHOP_GEAR, false )
+			.with( ServerSettings.SHOP_CARDS, true ) )
+		assertEquals( "300", conf["population_engine_vendor_pct"] )
+		assertEquals( "2", conf["population_engine_vendor_towns"] )
+		assertEquals( "50", conf["population_engine_vendor_price_pct"] )
+		val kinds = listOf( "loot", "supplies", "gear", "cards" ).map { conf["population_engine_vendor_$it"] }
+		assertEquals( listOf( "0", "0", "0", "1" ), kinds )
+	}
+
+	/** A shift is half to one and a half times the step; Never writes 0, which the server reads as no moves. */
+	@Test fun shopsMoveSetsTheShiftRange() {
+		val shifts = ServerSettings.SHOP_MOVE_STEPS.map { minutes ->
+			battle( defaults.with( ServerSettings.SHOPS_MOVE, minutes ) ).let {
+				it["population_engine_vendor_shift_min_ms"] + "-" + it["population_engine_vendor_shift_max_ms"]
+			}
+		}
+		assertEquals( listOf( "0-0", "300000-900000", "900000-2700000", "1800000-5400000" ), shifts )
+	}
+
 	/** The heal timer ticks every 500 ms (NATURAL_HEAL_INTERVAL), the least the server takes. */
 	@Test fun regenSpeedDividesTheHealIntervals() {
 		val official = battle( defaults )

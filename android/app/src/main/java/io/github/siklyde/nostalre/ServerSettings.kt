@@ -103,6 +103,12 @@ object ServerSettings {
 	val DENSITY_STEPS = listOf( 50, 100, 150, 200, 300 )
 	val MONSTER_STEPS = listOf( 50, 100, 150, 200, 300 )
 	val RESPAWN_STEPS = listOf( 1, 2, 3, 5, 10 )
+	val SHOP_COUNT_STEPS = listOf( 50, 100, 150, 200, 300 )
+	/** Towns with shops, by tier: 0 Prontera, 1 the main towns, 2 the small towns too. */
+	val SHOP_TOWN_STEPS = listOf( 0, 1, 2 )
+	val SHOP_PRICE_STEPS = listOf( 50, 75, 100, 150, 200 )
+	/** Minutes a shop stays put, on average; 0 never moves. */
+	val SHOP_MOVE_STEPS = listOf( 0, 10, 30, 60 )
 	// no 10x: the heal timer runs every 500 ms (NATURAL_HEAL_INTERVAL), so faster steps come out uneven
 	val REGEN_STEPS = listOf( 1, 2, 3, 5 )
 	/** Death penalty, rAthena's way: 100 is 1% of the EXP. */
@@ -125,6 +131,8 @@ object ServerSettings {
 	private fun count( value: Int ) = "$value"
 	private fun yesNo( on: Boolean ) = if( on ) 1 else 0
 	private fun square( value: Int ) = if( value == 0 ) "Off" else "${value * 2 + 1}×${value * 2 + 1}"
+	private fun shopTowns( value: Int ) = listOf( "Prontera", "Main towns", "All towns" )[value]
+	private fun shopMove( value: Int ) = if( value == 0 ) "Never" else if( value < 60 ) "~$value min" else "~${value / 60} h"
 	private fun penalty( value: Int ) = if( value == 0 ) "Off" else "${( value / 100.0 ).toString().removeSuffix( ".0" )}%"
 
 	// rAthena's rates are percents, 100 for 1x
@@ -159,14 +167,41 @@ object ServerSettings {
 		true ) { listOf( "population_engine_chat_enable" to yesNo( it ) ) }
 	val AI_REPLIES = Toggle( "world", "ai_replies", "AI replies", "AI players whisper back when you say their name.",
 		true ) { listOf( "population_engine_chat_reply_enable" to yesNo( it ) ) }
-	val AI_SHOPS = Toggle( "world", "ai_shops", "AI shops", "AI merchants open shops in town, common items at NPC prices, that you can buy from.",
-		true ) { listOf( "population_engine_vending_enable" to yesNo( it ) ) }
 	val AI_SKILLS = Toggle( "world", "ai_skills", "Smart skills",
 		"AI players pick the skill that suits the moment (the monster's element, a crowd, their SP) and fight their own way. Off: they cycle through their skills in turn.",
 		true ) { listOf( "population_engine_scored_skills" to yesNo( it ) ) }
 	val AI_ROUTINE = Toggle( "world", "ai_routine", "Daily routine",
 		"AI players in town follow the phone's clock: out and about by day, chatting in the evening (18:00), sitting at night (22:00 to 6:00).",
 		false ) { listOf( "population_engine_daily_cycle" to yesNo( it ) ) }
+
+	// the AI players' shops (vendor shells): db/population_vendors.yml says where and what, these how much
+	val AI_SHOPS = Toggle( "world", "ai_shops", "AI shops",
+		"AI merchants set up shops in town, selling monster drops, potions and gear, that you can buy from.",
+		true ) { listOf( "population_engine_vending_enable" to yesNo( it ) ) }
+	val SHOPS_PER_TOWN = Step( "world", "shops_per_town", "Shops per town",
+		"How many shops a town gets, against its usual count (Prontera has the most). Apart from How busy.",
+		SHOP_COUNT_STEPS, 100, ::percent ) { listOf( "population_engine_vendor_pct" to it ) }
+	val SHOP_TOWNS = Step( "world", "shop_towns", "Shops in",
+		"Which towns have AI shops: Prontera alone, the main towns, or the small ones too.",
+		SHOP_TOWN_STEPS, 1, ::shopTowns ) { listOf( "population_engine_vendor_towns" to it ) }
+	val SHOP_PRICES = Step( "world", "shop_prices", "Shop prices",
+		"What AI shops charge, against their usual prices: drops a bit under NPC prices, potions and gear at them.",
+		SHOP_PRICE_STEPS, 100, ::percent ) { listOf( "population_engine_vendor_price_pct" to it ) }
+	// a shift: half to one and a half times the step, so the stalls do not all move at once
+	val SHOPS_MOVE = Step( "world", "shops_move", "Shops move",
+		"How long a merchant keeps a spot before packing up, so the shops move around town over a long session.",
+		SHOP_MOVE_STEPS, 30, ::shopMove ) {
+		listOf( "population_engine_vendor_shift_min_ms" to it * 30_000, "population_engine_vendor_shift_max_ms" to it * 90_000 )
+	}
+	val SHOP_LOOT = Toggle( "world", "shop_loot", "Sell loot", "AI shops selling monster drops from fields and dungeons.",
+		true ) { listOf( "population_engine_vendor_loot" to yesNo( it ) ) }
+	val SHOP_SUPPLIES = Toggle( "world", "shop_supplies", "Sell supplies", "AI shops selling potions, buff items and arrows.",
+		true ) { listOf( "population_engine_vendor_supplies" to yesNo( it ) ) }
+	val SHOP_GEAR = Toggle( "world", "shop_gear", "Sell gear", "AI shops selling starter weapons and armour.",
+		true ) { listOf( "population_engine_vendor_gear" to yesNo( it ) ) }
+	val SHOP_CARDS = Toggle( "world", "shop_cards", "Cards in shops",
+		"Dungeon loot shops also sell a card or two (never an MVP's), at a high price.",
+		false ) { listOf( "population_engine_vendor_cards" to yesNo( it ) ) }
 
 	// the heal timer's interval divided: 2x as fast is every half the time
 	val REGEN = Step( "character", "regen", "HP/SP regen", "How fast HP and SP refill on their own, times the official speed.",
@@ -209,7 +244,9 @@ object ServerSettings {
 			listOf( BASE_EXP, JOB_EXP, QUEST_EXP, ITEM_DROPS, CARD_DROPS, MULTI_LEVEL_UP ) ),
 		Category( "Monsters", "How many monsters the maps have, and how fast they come back.", listOf( MONSTERS, RESPAWN ) ),
 		Category( "AI Players", "Other adventurers in the world, run by the server.",
-			listOf( AI, MAX_AI, DENSITY, AI_SKILLS, AI_ROUTINE, AI_CHAT, AI_REPLIES, AI_SHOPS ) ),
+			listOf( AI, MAX_AI, DENSITY, AI_SKILLS, AI_ROUTINE, AI_CHAT, AI_REPLIES ) ),
+		Category( "AI Shops", "Shops the AI merchants run in town: where, how many, what they sell and for how much.",
+			listOf( AI_SHOPS, SHOPS_PER_TOWN, SHOP_TOWNS, SHOP_PRICES, SHOPS_MOVE, SHOP_LOOT, SHOP_SUPPLIES, SHOP_GEAR, SHOP_CARDS ) ),
 		Category( "Character", "How your character recovers, and what dying costs.", listOf( REGEN, DEATH_PENALTY ) ),
 		Category( "Loot", "How drops reach your bag: straight away, or picked up from the ground.", listOf( AUTOLOOT, PICKUP_AREA ) ),
 		Category( "Skills", "Skills as the official game has them, or quicker to use.", listOf( SKIP_TELEPORT_MENU ) ),

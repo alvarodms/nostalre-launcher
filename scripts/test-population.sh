@@ -28,7 +28,10 @@
 #        most 15% of the time; then the same
 #        tour with population_engine_scored_skills off, for comparison (POP_TOUR_MAPS="<maps>" tours fewer maps,
 #        POP_SKIP_OFF=1 skips the second tour)
-# Usage: scripts/test-population.sh [off|on|s2|s3|party|levels|formation|personality|all]   (RATHENA_DIR=<server checkout>, POP_BIN=<bin dir>)
+#   shops the app's AI shop settings (@populate vendors): Prontera alone / main towns / all towns, Shops per town 50%,
+#        Shop prices 200% on a Red Potion, supplies only, loot only with cards (1-2 in dungeon shops only), and AI shops
+#        off leaving no shop merchants behind
+# Usage: scripts/test-population.sh [off|on|s2|s3|party|levels|formation|personality|shops|all]   (RATHENA_DIR=<server checkout>, POP_BIN=<bin dir>)
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
@@ -201,10 +204,12 @@ if [ "$what" = s2 ] || [ "$what" = all ]; then
 	id=$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")
 	grace="population_engine_demand_grace_ms: 20000"
 	full_density="population_engine_density_pct: 100" # the counts below are relative to 100 (nostalRE ships 200)
+	# shops do not follow density (population_engine_vendor_pct): out of the crowd counts below
+	no_shops="population_engine_vending_enable: 0"
 	at_prontera() { sql "UPDATE \`char\` SET last_map = 'prontera', last_x = 156, last_y = 191, zeny = 1000000 WHERE char_id = $id"; }
 
 	at_prontera
-	start_servers 1 "$grace" "$full_density"
+	start_servers 1 "$grace" "$full_density" "$no_shops"
 	sleep 30 # nobody on: demand spawn makes no shell
 	probe "$tmp/s2.txt" --social wait:10 --social "say:@who" --social "say:@whomap prontera" \
 		--social "say:@warp prt_fild08" --social wait:3 --social "say:@whomap prontera" \
@@ -225,7 +230,7 @@ if [ "$what" = s2 ] || [ "$what" = all ]; then
 		"$(yes_no '[ "${p3:-x}" = 0 ] && [ "${f2:-0}" -gt 1 ]')"
 
 	at_prontera
-	start_servers 1 "$grace" "population_engine_density_pct: 50"
+	start_servers 1 "$grace" "population_engine_density_pct: 50" "$no_shops"
 	probe "$tmp/s2-half.txt" --social wait:10 --social "say:@whomap prontera" --seconds 1
 	h=$(found "$tmp/s2-half.txt" prontera 1)
 	# shells only: the player is one of the counted
@@ -404,6 +409,8 @@ levels_py=$(cat <<'PY'
 import re, sys
 path, name, map_level, statpoints = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
 FIRST = {"Swordman", "Swordsman", "Mage", "Magician", "Archer", "Acolyte", "Merchant", "Thief", "Taekwon"}
+# transcendent first classes are first classes too (the shop merchants in towns are High Merchants among others)
+FIRST |= {"High " + j for j in FIRST}
 NO_NEXT_CLASS = {"Gunslinger", "Ninja"}
 FIST = {"Taekwon", "Star Gladiator", "Soul Linker"} # kick and punch: their gear sets hold no weapon
 def floor_cap(job): # population_class_level_range
@@ -644,6 +651,77 @@ if [ "$what" = personality ] || [ "$what" = all ]; then
 		echo "      scored_skills off (for comparison):" >&2
 		personality_check "$tmp/pers-off.txt" off || true
 	fi
+fi
+
+if [ "$what" = shops ] || [ "$what" = all ]; then
+	echo "== shops: the app's AI shop settings"
+	[ -n "$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")" ] || {
+		start_servers 0; probe "$tmp/create.txt" --create "$char" --seconds 1; }
+	id=$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")
+	sql "UPDATE \`char\` SET last_map = 'prontera', last_x = 156, last_y = 191 WHERE char_id = $id"
+	# shops_on <out> <map>...: on each map in turn, after the autosummon tick, the @populate vendors report
+	shops_on() {
+		local out=$1 steps=() m
+		shift
+		for m in "$@"; do
+			steps+=(--social "say:@warp $m" --social wait:13 --social "say:@populate vendors")
+		done
+		probe "$out" "${steps[@]}" --seconds 1
+	}
+	# shop_counts <out>: "<shops> of <target>" for each map, in order
+	shop_counts() { grep -aoP 'message: "vendors \K\d+ of \d+' "$1" || true; }
+	nth() { shop_counts "$1" | sed -n "${2}p"; }
+	keys() { grep -aoP 'message: "vendor aid .* key \K\S+' "$1" | sort -u | tr '\n' ' ' || true; }
+	# other_keys <keys> <allowed|...>: how many of the keys are not allowed (empty if grep fails: a FAIL)
+	other_keys() { echo "$1" | tr ' ' '\n' | sed '/^$/d' | grep -cvxE "$2" || true; }
+	potion_price() { grep -aoP 'message: "vendor aid .* key potions .* first 501@\K\d+' "$1" | head -1 || true; }
+	full() { local c; c=$(nth "$1" "$2"); [ -n "$c" ] && set -- ${c/ of / } && [ "$2" -gt 0 ] && [ $(($1 * 10)) -ge $(($2 * 9)) ]; }
+
+	# Prontera alone: shops in Prontera, none in Geffen
+	start_servers 1 "population_engine_vendor_towns: 0"
+	shops_on "$tmp/shops-a.txt" prontera geffen
+	p100=$(potion_price "$tmp/shops-a.txt")
+	check "SH1 Shops in Prontera: prontera $(nth "$tmp/shops-a.txt" 1), geffen $(nth "$tmp/shops-a.txt" 2)" \
+		"$(yes_no 'full "$tmp/shops-a.txt" 1 && [ "$(nth "$tmp/shops-a.txt" 2)" = "0 of 0" ]')"
+
+	# main towns, half the shops at twice the price: Geffen gets them, Amatsu (minor) does not
+	start_servers 1 "population_engine_vendor_towns: 1" "population_engine_vendor_pct: 50" "population_engine_vendor_price_pct: 200"
+	shops_on "$tmp/shops-b.txt" prontera geffen amatsu
+	p200=$(potion_price "$tmp/shops-b.txt")
+	check "SH2 Shops per town 50%: prontera $(nth "$tmp/shops-b.txt" 1) (want 15)" \
+		"$(yes_no 'full "$tmp/shops-b.txt" 1 && [ "$(nth "$tmp/shops-b.txt" 1 | cut -d" " -f3)" = 15 ]')"
+	check "SH3 main towns: geffen $(nth "$tmp/shops-b.txt" 2), amatsu $(nth "$tmp/shops-b.txt" 3)" \
+		"$(yes_no 'full "$tmp/shops-b.txt" 2 && [ "$(nth "$tmp/shops-b.txt" 3)" = "0 of 0" ]')"
+	check "SH4 Shop prices 200%: a Red Potion ${p100:-?} -> ${p200:-?}" \
+		"$(yes_no '[ -n "$p100" ] && [ -n "$p200" ] && [ "$p200" = $((p100 * 2)) ]')"
+
+	# all towns, supplies only: Amatsu gets shops, and every shop is a supply shop
+	start_servers 1 "population_engine_vendor_towns: 2" "population_engine_vendor_loot: 0" "population_engine_vendor_gear: 0"
+	shops_on "$tmp/shops-c.txt" amatsu prontera
+	k=$(keys "$tmp/shops-c.txt")
+	check "SH5 all towns: amatsu $(nth "$tmp/shops-c.txt" 1)" "$(yes_no 'full "$tmp/shops-c.txt" 1')"
+	check "SH6 supplies only: keys $k" \
+		"$(yes_no '[ -n "$k" ] && [ "$(other_keys "$k" "potions|buff_shop|ammo_shop")" = 0 ]')"
+
+	# loot only, with cards: loot shops alone, and the dungeon ones carry a card or two, the field ones none
+	start_servers 1 "population_engine_vendor_supplies: 0" "population_engine_vendor_gear: 0" "population_engine_vendor_cards: 1"
+	shops_on "$tmp/shops-d.txt" prontera
+	k=$(keys "$tmp/shops-d.txt")
+	carded=$(grep -acP 'key dungeon_drops .* cards [12] ' "$tmp/shops-d.txt" || true)
+	dungeon=$(grep -ac 'key dungeon_drops ' "$tmp/shops-d.txt" || true)
+	stray=$(grep -acP 'key (?!dungeon_drops )\S+ .* cards [1-9]|cards [3-9]' "$tmp/shops-d.txt" || true)
+	check "SH7 loot only: keys $k" \
+		"$(yes_no '[ -n "$k" ] && [ "$(other_keys "$k" "field_drops|dungeon_drops")" = 0 ]')"
+	check "SH8 cards: $carded of $dungeon dungeon shops carry 1-2, $stray others or more" \
+		"$(yes_no '[ "$dungeon" -gt 0 ] && [ "$carded" -gt 0 ] && [ "$stray" = 0 ]')"
+
+	# AI shops off: no shops, and no shop merchants sitting in their place
+	start_servers 1 "population_engine_vending_enable: 0"
+	probe "$tmp/shops-e.txt" --social wait:13 --social "say:@populate vendors" --social "say:@whomap prontera" --seconds 1
+	on_map=$(found "$tmp/shops-e.txt" prontera 1)
+	check "SH9 AI shops off: $(nth "$tmp/shops-e.txt" 1), prontera ${on_map:-?} on the map (no sitters filling the cap)" \
+		"$(yes_no '[ "$(nth "$tmp/shops-e.txt" 1 | cut -d" " -f1)" = 0 ] && [ -n "$on_map" ] && [ "$on_map" -lt 100 ]')"
+	grep -aq 'could not open its shop' "$logs/map.log" && echo "note  map.log: $(grep -ac 'could not open its shop' "$logs/map.log") vendors could not open a shop" || true
 fi
 
 echo "logs: $logs  probe output: kept only on failure"
