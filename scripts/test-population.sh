@@ -6,7 +6,8 @@
 #        reaches SQLite, no SQL errors, a whisper that only contains "pt" changes no party, the player's own save
 #        survives a restart
 #   s2   phone tuning: shells only where the player is, released after the grace window (20 s here), density
-#        scales the crowd, buying from a shell vendor logs no shell row, wander skips maps nobody is on
+#        scales the crowd, wander skips maps nobody is on; Prontera's shell vendors: shops up, none by an NPC,
+#        buying logs no shell row, the stalls turn over as their shifts end
 #   s3   the app's world settings (ServerConf.battleFile keys) reach the server: shell cap in the boot line,
 #        mob_count_rate in the monsters the boot loads
 #   levels shells suit their map: on a low, a mid and a high map and a town, each shell's level falls in the range
@@ -232,9 +233,9 @@ if [ "$what" = s2 ] || [ "$what" = all ]; then
 	check "AC4 density 50: prontera $half shells vs $full at 100 (want 40-60%, +-1)" \
 		"$(yes_no '[ "$full" -gt 0 ] && [ $((half * 100)) -ge $(( (full * 40) - 100 )) ] && [ $((half * 100)) -le $(( (full * 60) + 100 )) ]')"
 
-	# a shell vendor on prt_mk (db/population_vendors.yml): its AID from the shop sign, then one item bought
-	sql "UPDATE \`char\` SET last_map = 'prt_mk', last_x = 100, last_y = 100, zeny = 1000000 WHERE char_id = $id"
-	# default grace: the vendor must outlive the gap between the two sessions
+	# shell vendors in Prontera (db/population_vendors.yml): a shop in sight and one item bought, under the shipped
+	# shifts (minutes) so it stays open between the sessions; default grace, so the vendors outlive the gaps too
+	at_prontera
 	start_servers 1
 	probe "$tmp/s2-board.txt" --dump StoreEntry --social wait:12 --seconds 1
 	vendor=$(grep -aoP 'VendingBoardShown \{ aid: \K\d+' "$tmp/s2-board.txt" | head -1 || true)
@@ -247,8 +248,28 @@ if [ "$what" = s2 ] || [ "$what" = all ]; then
 		check "AC5 bought from shell vendor $vendor ($bought), picklog shell rows $shell_rows (rows $before -> $(sql "SELECT COUNT(*) FROM picklog"))" \
 			"$(yes_no '[ "$bought" -gt 0 ] && [ "$shell_rows" = 0 ]')"
 	else
-		check "AC5 a shell vendor's shop sign on prt_mk" 1
+		check "AC5 a shell vendor's shop sign in sight in prontera" 1
 	fi
+
+	# all of Prontera's shops up, none by an NPC, and with short shifts the stalls turn over within the stage
+	start_servers 1 "population_engine_vendor_shift_min_ms: 15000" "population_engine_vendor_shift_max_ms: 20000"
+	probe "$tmp/s2-shops.txt" --social wait:12 --social "say:@populate vendors" --seconds 1
+	shops=$(grep -aoP 'message: "vendors \K\d+(?= of)' "$tmp/s2-shops.txt" | tail -1 || true)
+	target=$(grep -aoP 'message: "vendors \d+ of \K\d+' "$tmp/s2-shops.txt" | tail -1 || true)
+	by_npc=$(grep -ac 'message: "vendor aid .* clear no' "$tmp/s2-shops.txt" || true)
+	first=$(grep -aoP 'message: "vendor aid \K\d+' "$tmp/s2-shops.txt" | sort -u || true)
+	# a few slots may find no free cell this tick (spacing, NPCs); the next tick fills them
+	check "AC7 prontera has its shops: ${shops:-?} of ${target:-?} (want 90%+)" \
+		"$(yes_no '[ -n "$shops" ] && [ -n "$target" ] && [ "$target" -gt 0 ] && [ $((shops * 10)) -ge $((target * 9)) ]')"
+	check "AC8 no shop within 3 cells of an NPC or warp ($by_npc)" "$(yes_no '[ -n "$shops" ] && [ "$by_npc" = 0 ]')"
+	# every first-wave shift (15-20 s) is over by now: those stalls closed and new ones opened elsewhere
+	sleep 30
+	probe "$tmp/s2-later.txt" --social wait:3 --social "say:@populate vendors" --seconds 1
+	later=$(grep -aoP 'message: "vendor aid \K\d+' "$tmp/s2-later.txt" | sort -u || true)
+	kept=$(comm -12 <(echo "$first") <(echo "$later") | grep -c . || true)
+	check "AC9 shops turn over: $(echo "$first" | grep -c .) then $(echo "$later" | grep -c .) shops, $kept kept" \
+		"$(yes_no '[ -n "$first" ] && [ -n "$later" ] && [ "$kept" = 0 ]')"
+	grep -aq 'could not open its shop' "$logs/map.log" && echo "note  map.log: $(grep -ac 'could not open its shop' "$logs/map.log") vendors could not open a shop" || true
 	sql "UPDATE \`char\` SET last_map = 'prontera', last_x = 156, last_y = 191 WHERE char_id = $id"
 fi
 
