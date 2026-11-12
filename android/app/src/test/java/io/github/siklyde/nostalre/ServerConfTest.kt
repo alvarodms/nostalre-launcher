@@ -123,7 +123,7 @@ class ServerConfTest {
 	/** Every key written is one the server's own battle confs set (a typo would be ignored by rAthena, silently). */
 	@Test fun everyKeyIsARealSetting() {
 		val battle = File( "../../server/conf/battle" )
-		val known = listOf( "exp.conf", "drops.conf", "population_engine.conf", "monster.conf", "skill.conf", "player.conf" )
+		val known = listOf( "exp.conf", "drops.conf", "population_engine.conf", "monster.conf", "skill.conf", "player.conf", "party.conf" )
 			.flatMap { parse( File( battle, it ).readText() ).keys }.toSet()
 		val written = parse( ServerConf.battleFile( defaults ) ).keys
 		for( key in written )
@@ -222,6 +222,13 @@ class ServerConfTest {
 		assertEquals( "0", conf["death_penalty_base"] )
 		assertEquals( "0", conf["death_penalty_job"] )
 		assertEquals( listOf( "Off", "0.25%", "0.5%", "1%", "2%" ), ServerSettings.DEATH_PENALTY_STEPS.map( ServerSettings.DEATH_PENALTY.format ) )
+	}
+
+	@Test fun partyBonusIsOffUntilPicked() {
+		assertEquals( "0", battle( defaults )["party_even_share_bonus"] )
+		assertEquals( "10", battle( defaults.with( ServerSettings.PARTY_BONUS, 10 ) )["party_even_share_bonus"] )
+		assertEquals( listOf( "Off", "+5%", "+10%", "+15%", "+20%", "+25%", "+50%" ),
+			ServerSettings.PARTY_BONUS_STEPS.map( ServerSettings.PARTY_BONUS.format ) )
 	}
 
 	/** Each setting saves under its own key of its store: none overwrites another's pick. */

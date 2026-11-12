@@ -115,6 +115,8 @@ object ServerSettings {
 	val DEATH_PENALTY_STEPS = listOf( 0, 25, 50, 100, 200 )
 	/** Pickup area, cells around the item picked up: up to 14, the server's max (about the whole screen). */
 	val PICKUP_AREA_STEPS = listOf( 0, 1, 2, 3, 5, 7, 14 )
+	/** Party EXP bonus, percent per member beyond the first; 0 is official (none). */
+	val PARTY_BONUS_STEPS = listOf( 0, 5, 10, 15, 20, 25, 50 )
 
 	// conf/battle/drops.conf: every item rate but the cards', and the cards'
 	val DROP_KEYS = listOf(
@@ -133,6 +135,7 @@ object ServerSettings {
 	private fun square( value: Int ) = if( value == 0 ) "Off" else "${value * 2 + 1}×${value * 2 + 1}"
 	private fun shopTowns( value: Int ) = listOf( "Prontera", "Main towns", "All towns" )[value]
 	private fun shopMove( value: Int ) = if( value == 0 ) "Never" else if( value < 60 ) "~$value min" else "~${value / 60} h"
+	private fun partyBonus( value: Int ) = if( value == 0 ) "Off" else "+$value%"
 	private fun penalty( value: Int ) = if( value == 0 ) "Off" else "${( value / 100.0 ).toString().removeSuffix( ".0" )}%"
 
 	// rAthena's rates are percents, 100 for 1x
@@ -149,6 +152,11 @@ object ServerSettings {
 	val MULTI_LEVEL_UP = Toggle( "rates", "multi_level_up", "Multi level-up",
 		"One kill can give several levels at once. Off, the official way: one level at most, the rest of the EXP lost.",
 		false ) { listOf( "multi_level_up" to yesNo( it ) ) }
+
+	// conf/battle/party.conf: even share only; members dead, idle or on another map do not count
+	val PARTY_BONUS = Step( "rates", "party_bonus", "Party EXP bonus",
+		"Extra EXP a party on Even Share gets for each member beyond the first who is on the map: at +10%, five share 140% of the EXP, 28% each instead of 20%. AI players in your party count as members.",
+		PARTY_BONUS_STEPS, 0, ::partyBonus ) { listOf( "party_even_share_bonus" to it ) }
 
 	val MONSTERS = Step( "world", "monsters", "Monsters", "How many monsters each map has, against the official count.",
 		MONSTER_STEPS, 100, ::percent ) { listOf( "mob_count_rate" to it ) }
@@ -244,7 +252,7 @@ object ServerSettings {
 
 	val categories = listOf(
 		Category( "Rates", "EXP and drops, as multiples of the official rates.",
-			listOf( BASE_EXP, JOB_EXP, QUEST_EXP, ITEM_DROPS, CARD_DROPS, MULTI_LEVEL_UP ) ),
+			listOf( BASE_EXP, JOB_EXP, QUEST_EXP, ITEM_DROPS, CARD_DROPS, MULTI_LEVEL_UP, PARTY_BONUS ) ),
 		Category( "Monsters", "How many monsters the maps have, and how fast they come back.", listOf( MONSTERS, RESPAWN ) ),
 		Category( "AI Players", "Other adventurers in the world, run by the server.",
 			listOf( AI, MAX_AI, DENSITY, AI_SKILLS, AI_PARTIES, AI_ROUTINE, AI_CHAT, AI_REPLIES ) ),
