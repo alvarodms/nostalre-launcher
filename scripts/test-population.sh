@@ -33,9 +33,11 @@
 #        off leaving no shop merchants behind
 #   parties shell parties (db/population_party.yml, @populate parties), with every party recruiting and, on the Veins
 #        field, singing and with a Professor: two parties form there as the map fills (a leader on the camp, a healer,
-#        3-5 roamers, Bard and Dancer side by side, a Professor, second classes); a player entering the leader's chat room
-#        is told the party is full and a member whispered "party" says it is in one; over 6 min at the first camp the same
-#        shells keep their duties (camp held, roamers back and out again with Blessing and Increase Agility, songs up,
+#        3-5 roamers, Bard and Dancer side by side, a Professor, second classes); a partyless player (level 95 for the
+#        stage) entering the leader's chat room, or whispering "party" to a member, is taken in: a party of their own with
+#        Even Share holds the camp's members, a player in a party is told to leave it first, dead at the camp they are
+#        raised, hurt they are healed and buffed, they gain EXP from the camp's kills, and leaving the map ends it; over
+#        6 min at the first camp the same shells keep their duties (camp held, roamers back and out again with Blessing and Increase Agility, songs up,
 #        the leader sitting in a chat room); a roamer killed far out (#kill) lies there and gets up unraised, one killed
 #        at the camp is raised by the priest, one emptied of SP there gets the Professor's Soul Exchange; on a
 #        beginners' field the party's classes step down and its class duties are left out; and the switch off leaves
@@ -742,18 +744,31 @@ MEMBER = re.compile(r'message: "member (\d+) (\S+) job (.+?) lv (\d+) name (\S+)
 	r'hp (\d+) sp (\d+) sit (\d) room (\d) bless (\d) agi (\d) songs (\d+) trips (\d+) raised (\d+) helps (\d+)')
 PARTY = re.compile(r'message: "party (\d+) (\S+) camp (\d+),(\d+) members (\d+)/(\d+) room \'([^\']*)\'')
 ABSENT = re.compile(r'message: "member (\d+) (\S+) job (.+?) absent')
+JOINED = re.compile(r' joined (\d+) party_id (\d+)')
+IN_PARTY = re.compile(r' in_party (\d)')
+PLAYER = re.compile(r'message: "player (\d+) name (\S+) lv (\d+) at (\d+),(\d+) camp_dist (\d+) hp (\d+) sp (\d+) dead (\d) bless (\d) agi (\d)')
+PLAYER_KEYS = "party name lv x y dist hp sp dead bless agi".split()
 KEYS = "party duty job lv name x y sx sy dist state hp sp sit room bless agi songs trips raised helps".split()
-def samples(path): # one dict per report: {"parties": {id: {...}}, "members": [...]}
+def samples(path): # one dict per report: {"parties": {id: {...}}, "members": [...], "players": [...]}
 	out, cur, seen = [], None, set()
 	for line in open(path, errors="replace"):
 		p = PARTY.search(line)
 		if p:
 			if cur is None or p.group(1) in seen:
-				cur, seen = {"parties": {}, "members": []}, set()
+				cur, seen = {"parties": {}, "members": [], "players": []}, set()
 				out.append(cur)
 			seen.add(p.group(1))
+			j = JOINED.search(line)
 			cur["parties"][p.group(1)] = dict(kind=p.group(2), camp=(int(p.group(3)), int(p.group(4))), on=int(p.group(5)),
-				size=int(p.group(6)), room=p.group(7))
+				size=int(p.group(6)), room=p.group(7), joined=int(j.group(1)) if j else 0, party_id=int(j.group(2)) if j else 0)
+			continue
+		pl = PLAYER.search(line)
+		if pl and cur is not None:
+			d = dict(zip(PLAYER_KEYS, pl.groups()))
+			for k in PLAYER_KEYS:
+				if k not in ("party", "name"):
+					d[k] = int(d[k])
+			cur["players"].append(d)
 			continue
 		m = MEMBER.search(line)
 		if m and cur is not None:
@@ -761,6 +776,8 @@ def samples(path): # one dict per report: {"parties": {id: {...}}, "members": [.
 			for k in KEYS:
 				if k not in ("party", "duty", "job", "name", "state"):
 					d[k] = int(d[k])
+			ip = IN_PARTY.search(line)
+			d["in_party"] = int(ip.group(1)) if ip else 0
 			cur["members"].append(d)
 		elif ABSENT.search(line) and cur is not None:
 			a = ABSENT.search(line)
@@ -848,7 +865,7 @@ elif what == "pick": # <output> far|near|singer: a member to hurt: the roamer fu
 	want = sys.argv[3]
 	up = [m for m in last["members"] if m["state"] not in ("absent", "dead")]
 	if want == "far":
-		out = sorted((m for m in up if m["duty"] == "roamer" and m["state"] == "hunt" and m["dist"] >= 24), key=lambda m: -m["dist"])
+		out = sorted((m for m in up if m["duty"] == "roamer" and m["state"] == "hunt" and m["dist"] >= 24 and m["raised"] == 0), key=lambda m: -m["dist"])
 		print(out[0]["name"] if out else "")
 	else:
 		duties = ("performer",) if want == "singer" else ("battery", "performer")
@@ -901,6 +918,49 @@ elif what == "low": # <output> <monster level>: classes the map's level allows, 
 		bad += fail("no party on the map")
 	print("      level %d: %s" % (level, ", ".join("%s %s" % (m["duty"], m["job"]) for m in last["members"])))
 
+elif what == "join": # <output> <char id> <step>: the reports of the join session, in order (see the parties stage)
+	cid, step = int(sys.argv[3]), sys.argv[4]
+	steps = ["joined", "died", "raised", "hurt", "healed", "left", "released"]
+	if len(reports) != len(steps):
+		sys.exit(fail("%d reports, want %d (one for each step)" % (len(reports), len(steps))))
+	r = reports[steps.index(step)]
+	joined = [pid for pid, party in r["parties"].items() if party["joined"] == cid]
+	others = [pid for pid, party in r["parties"].items() if party["joined"] not in (0, cid)]
+	if others:
+		bad += fail("parties %s joined by someone else" % others)
+	def members(pid):
+		return [m for m in r["members"] if m["party"] == pid and m["state"] != "absent"]
+	if step in ("left", "released"): # back to their own party: nobody joined, nobody in a real party
+		if joined or r["players"]:
+			bad += fail("party %s still joined: %s" % (joined, r["players"]))
+		inside = [m["name"] for m in r["members"] if m["in_party"]]
+		if inside:
+			bad += fail("members still in the player's party: %s" % inside)
+	else:
+		if len(joined) != 1:
+			sys.exit(fail("%d parties joined by the player, want 1" % len(joined)))
+		pid = joined[0]
+		out = [m["name"] for m in members(pid) if not m["in_party"]]
+		if out or not members(pid):
+			bad += fail("party %s: members not in the player's party: %s" % (pid, out))
+		inside = [m["name"] for m in r["members"] if m["party"] != pid and m["in_party"]]
+		if inside:
+			bad += fail("members of another party in the player's: %s" % inside)
+		player = r["players"][0] if r["players"] else None
+		if player is None:
+			sys.exit(fail("no player line for party %s" % pid))
+		# the priest is quick: 1 s after the damage the player is healed, 2 s after @die raised (the death itself is in
+		# the party events, PT9's bash side)
+		if step in ("hurt", "healed") and player["hp"] < 90:
+			bad += fail("the player has %d%% HP %s after the damage" % (player["hp"], "1 s" if step == "hurt" else "13 s"))
+		if step == "healed" and not any(p["bless"] and p["agi"] for rr in reports[3:5] for p in rr["players"]):
+			bad += fail("the player at the camp never had Blessing and Increase Agility both")
+		if step in ("died", "raised") and player["dead"]:
+			bad += fail("the player is still dead %s after @die" % ("2 s" if step == "died" else "27 s"))
+		print("      %s: party %s, %d members in the player's party; player lv %d hp %d%% dead %d bless %d agi %d; members lv %s" % (
+			step, pid, len(members(pid)), player["lv"], player["hp"], player["dead"], player["bless"], player["agi"],
+			sorted(m["lv"] for m in members(pid))))
+
 elif what == "none":
 	if reports:
 		bad += fail("%d parties with population_engine_parties off" % len(reports[-1]["parties"]))
@@ -927,6 +987,12 @@ if [ "$what" = parties ] || [ "$what" = all ]; then
 	    Parties: { camp_leveling: 1 }
 	YML
 	report=(--social "say:@populate parties")
+	# no party: only a player in none can join a camp (PT9)
+	pt_id=$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")
+	sql "DELETE FROM party WHERE leader_char = $pt_id"
+	pt_level=$(sql "SELECT base_level FROM \`char\` WHERE char_id = $pt_id")
+	# at the camp members' level (90-99 on the Veins field), so Even Share holds (PT9)
+	sql "UPDATE \`char\` SET party_id = 0, base_level = 95, base_exp = 0 WHERE char_id = $pt_id"
 	start_servers 1 "population_engine_demand_grace_ms: 20000" "population_engine_density_pct: 100"
 	check "PT1 population_party.yml loads without warnings" \
 		"$(yes_no '! grep -aE "^\[(Error|Warning)\]" "$logs/map.log" | grep -aqiE "party|ally_dead|ally_sp_below|skill set"')"
@@ -936,20 +1002,58 @@ if [ "$what" = parties ] || [ "$what" = all ]; then
 	check "PT2 two parties on the Veins field: leader, healer, roamers, a duo side by side, a Professor; classes fit the map" \
 		"$(yes_no 'parties_check shape "$tmp/pt-a.txt"')"
 
-	# players cannot join yet: the leader's chat room answers them, and a member asked to party is taken
+	# a player joins the first camp through its leader's chat room: the party is made for them, the members come in
+	# and keep their duties, the support heals, buffs and raises them; leaving the map ends it, a player in a party
+	# is refused, a whispered "party" joins too, and leaving the party ends it
 	camp=$(grep -aoP 'message: "party \d+ \S+ camp \K\d+,\d+' "$tmp/pt-a.txt" | head -1)
 	leader=$(grep -aoP 'message: "party \d+ .* leader \K\d+' "$tmp/pt-a.txt" | head -1)
-	member=$(grep -aoP 'message: "member \d+ support .* name \K\S+' "$tmp/pt-a.txt" | head -1)
-	# as probe(), with the packet of what others say printed too (the leader's line in the room)
-	( cd "$CLIENT" && cargo run -q -p nostalre-network --example session_probe -- --user tester --pass tester --dump NotifyChat \
-		--social "say:@warp ve_fild03 ${camp/,/ }" --social wait:12 --social "chatroom-join:$leader" --social wait:3 \
-		--social "whisper:$member:party" --social wait:3 --seconds 1 ) > "$tmp/pt-h.txt" 2>&1 || true
+	first=$(grep -aoP 'message: "party \K\d+' "$tmp/pt-a.txt" | head -1)
+	member=$(grep -aoP "message: \"member $first support .* name \\K\\S+" "$tmp/pt-a.txt" | head -1)
+	leader_name=$(grep -aoP "message: \"member $first anchor .* name \\K\\S+" "$tmp/pt-a.txt" | head -1)
+	id=$pt_id
+	# in the room: the probe's chatroom-join step fails when the room closes under it (the join), and a failed
+	# step ends the session's steps; logging out ends the join
+	probe "$tmp/pt-h.txt" --social "say:@warp ve_fild03 ${camp/,/ }" --social wait:12 --social "chatroom-join:$leader" \
+		--social wait:4 --seconds 1
 	[ -z "${POP_KEEP:-}" ] || { rm -rf "$work/parties-last"; cp -r "$tmp" "$work/parties-last"; }
-	check "PT2b in the leader's chat room the player is told the party is full; a member whispered 'party' says it is in one" \
-		"$(yes_no 'grep -aq "full right now" "$tmp/pt-h.txt" && grep -aq "in a party already" "$tmp/pt-h.txt"')"
+	check "PT2b in the leader's room ('${leader_name:-?}') the player is taken in: welcomed, the party list holds the camp" \
+		"$(yes_no 'grep -aq "Welcome! Stay by the camp" "$tmp/pt-h.txt" && grep -aF "PartyMemberList" "$tmp/pt-h.txt" | grep -aF "$leader_name" | grep -aF "$member" | grep -aqF "$char"')"
+	check "PT2b the party is made with Even Share, the members' HP bars come" \
+		"$(yes_no 'grep -aF "PartyConfigChanged" "$tmp/pt-h.txt" | grep -aq "exp_option: 1" && grep -aq "PartyMemberHp" "$tmp/pt-h.txt"')"
+	# the rest by whisper, on the party the room made: refused until the player leaves it. Dead before any EXP
+	# comes, so the death costs nothing; then hurt, then a while at the camp for the EXP
+	max_hp=$(sql "SELECT max_hp FROM \`char\` WHERE char_id = $id")
+	exp_before=$(sql "SELECT base_exp FROM \`char\` WHERE char_id = $id")
+	probe "$tmp/pt-i.txt" --social "say:@warp ve_fild03 ${camp/,/ }" --social wait:12 \
+		--social "whisper:$member:party" --social wait:2 --social "party-leave" --social wait:3 \
+		--social "whisper:$member:party" --social wait:5 "${report[@]}" --social "whisper:$member:party" --social wait:2 \
+		--social "say:@die" --social wait:2 "${report[@]}" --social wait:25 "${report[@]}" \
+		--social "say:@heal -$((max_hp * 6 / 10)) 0" --social wait:1 "${report[@]}" --social wait:12 "${report[@]}" \
+		--social wait:40 --social "say:@warp prontera" --social wait:4 --social "say:@warp ve_fild03 ${camp/,/ }" \
+		--social wait:6 "${report[@]}" --social "party-leave" --social wait:3 "${report[@]}" --seconds 1
+	[ -z "${POP_KEEP:-}" ] || { rm -rf "$work/parties-last"; cp -r "$tmp" "$work/parties-last"; }
+	exp_after=$(sql "SELECT base_exp FROM \`char\` WHERE char_id = $id")
+	check "PT9 a player in a party is told to leave it first" "$(yes_no 'grep -aq "in a party already. Leave it" "$tmp/pt-i.txt"')"
+	check "PT9 with no party, a member whispered 'party' takes the player in: every member on the map, the first camp's only" \
+		"$(yes_no 'parties_check join "$tmp/pt-i.txt" "$id" joined')"
+	check "PT9 a member whispered 'party' again says the player is with them already" "$(yes_no 'grep -aq "with us already" "$tmp/pt-i.txt"')"
+	aid=$(sql "SELECT account_id FROM \`char\` WHERE char_id = $id")
+	after_die=$(awk '/social: say:@die/{on=1} on' "$tmp/pt-i.txt")
+	check "PT9 dead at the camp the player is raised: dead, up again, Resurrection" \
+		"$(yes_no 'echo "$after_die" | grep -aqF "PartyMemberDead { aid: $aid, dead: true }" && echo "$after_die" | grep -aqF "PartyMemberDead { aid: $aid, dead: false }" && grep -aq "PacketZcResurrection" "$tmp/pt-i.txt" && parties_check join "$tmp/pt-i.txt" "$id" died && parties_check join "$tmp/pt-i.txt" "$id" raised')"
+	check "PT9 hurt at the camp (60% of their HP) the player is healed within a second, and has Blessing and Increase Agility" \
+		"$(yes_no 'grep -aq "HP or/and SP modified" "$tmp/pt-i.txt" && parties_check join "$tmp/pt-i.txt" "$id" hurt && parties_check join "$tmp/pt-i.txt" "$id" healed')"
+	check "PT9 Even Share in range (level 95, members 90-99): the player gained from the camp's kills: exp ${exp_before:-?} -> ${exp_after:-?}" \
+		"$(yes_no '[ "${exp_after:-0}" -gt "${exp_before:-0}" ]')"
+	check "PT9 leaving the map takes the members out of the player's party" \
+		"$(yes_no 'parties_check join "$tmp/pt-i.txt" "$id" left && grep -aq "PartyMemberRemoved" "$tmp/pt-i.txt"')"
+	check "PT9 leaving the party after that: still nobody in it" "$(yes_no 'parties_check join "$tmp/pt-i.txt" "$id" released')"
 
 	# the player stands at the first camp: its members hold their cells, the roamers come and go
-	watch=(--social "say:@warp ve_fild03 ${camp/,/ }")
+	# the player only watches from here: monsters at the camp may kill them, and dead they get no answers. Each
+	# session starts them up again
+	up=(--social "say:@alive" --social "say:@heal")
+	watch=("${up[@]}" --social "say:@warp ve_fild03 ${camp/,/ }")
 	for _ in $(seq 1 "${POP_PARTY_SAMPLES:-26}"); do watch+=(--social wait:15 "${report[@]}"); done
 	probe "$tmp/pt-b.txt" "${watch[@]}" --social wait:1 --seconds 1
 	check "PT3 over $((${POP_PARTY_SAMPLES:-26} / 4)) min the same shells keep their duties: camp held, roamers back and out again buffed, songs, the leader's room" \
@@ -957,31 +1061,41 @@ if [ "$what" = parties ] || [ "$what" = all ]; then
 	[ -z "${POP_KEEP:-}" ] || { rm -rf "$work/parties-last"; cp -r "$tmp" "$work/parties-last"; cp "$logs/map.log" "$work/parties-last/"; }
 
 	# a roamer killed out of the healer's sight lies there for the party's Respawn, then is up at the camp
-	far=$(python3 -c "$parties_py" pick "$tmp/pt-b.txt" far)
-	probe "$tmp/pt-c.txt" --social wait:2 --social "say:#kill $far" --social wait:4 "${report[@]}" --social wait:40 "${report[@]}" --seconds 1
+	# the pick comes from the last report: a roamer may walk back into the healer's sight before the kill. Then it
+	# is raised there, rightly, so pick again from a fresher report (up to 3 tries)
+	pick_from="$tmp/pt-b.txt"
+	for try in 1 2 3; do
+		far=$(python3 -c "$parties_py" pick "$pick_from" far)
+		[ -n "$far" ] || break
+		probe "$tmp/pt-c.txt" "${up[@]}" --social wait:2 --social "say:#kill $far" --social wait:4 "${report[@]}" --social wait:40 "${report[@]}" --seconds 1
+		parties_check walked "$tmp/pt-c.txt" "$far" 2>/dev/null && break
+		echo "      try $try: $far was back by the camp when killed; picking again"
+		cp "$tmp/pt-c.txt" "$tmp/pt-c$try.txt"; pick_from="$tmp/pt-c$try.txt"
+	done
 	check "PT4 a roamer killed far from the camp (${far:-none found}) lies there, then is up again unraised, the same shell" \
 		"$(yes_no '[ -n "$far" ] && parties_check walked "$tmp/pt-c.txt" "$far"')"
 	# one killed at the camp is raised by the priest
 	near=$(python3 -c "$parties_py" pick "$tmp/pt-c.txt" near)
-	probe "$tmp/pt-d.txt" --social wait:2 --social "say:#kill $near" --social wait:1 "${report[@]}" --social wait:20 "${report[@]}" --seconds 1
+	probe "$tmp/pt-d.txt" "${up[@]}" --social wait:2 --social "say:#kill $near" --social wait:1 "${report[@]}" --social wait:20 "${report[@]}" --seconds 1
 	check "PT5 a member killed at the camp (${near:-none found}) is raised by the priest" \
 		"$(yes_no '[ -n "$near" ] && parties_check raised "$tmp/pt-d.txt" "$near"')"
 
 	# one out of SP at the camp gets the Professor's
 	singer=$(python3 -c "$parties_py" pick "$tmp/pt-d.txt" singer)
-	probe "$tmp/pt-g.txt" --social wait:2 --social "say:#heal $singer -1 -30000" --social wait:10 "${report[@]}" --seconds 1
+	probe "$tmp/pt-g.txt" "${up[@]}" --social wait:2 --social "say:#heal $singer -1 -30000" --social wait:10 "${report[@]}" --seconds 1
 	check "PT6 a member out of SP at the camp (${singer:-none found}) gets the Professor's Soul Exchange" \
 		"$(yes_no '[ -n "$singer" ] && parties_check sp "$tmp/pt-g.txt" "$singer" "$tmp/pt-d.txt"')"
 
 	# a beginners' field: the same party in the classes its level allows
-	probe "$tmp/pt-e.txt" --social "say:@warp pay_fild01" --social wait:12 "${report[@]}" --seconds 1
+	probe "$tmp/pt-e.txt" "${up[@]}" --social "say:@warp pay_fild01" --social wait:12 "${report[@]}" --seconds 1
 	low=$(grep -aoP "map 'pay_fild01' has monster level \K\d+" "$logs/map.log" | tail -1)
 	check "PT7 on pay_fild01 (monster level ${low:-?}) the party's classes step down and class duties are left out" \
 		"$(yes_no '[ -n "$low" ] && parties_check low "$tmp/pt-e.txt" "$low"')"
 
 	start_servers 1 "population_engine_demand_grace_ms: 20000" "population_engine_density_pct: 100" "population_engine_parties: 0"
-	probe "$tmp/pt-f.txt" --social "say:@warp ve_fild03" --social wait:12 "${report[@]}" --seconds 1
+	probe "$tmp/pt-f.txt" "${up[@]}" --social "say:@warp ve_fild03" --social wait:12 "${report[@]}" --seconds 1
 	check "PT8 population_engine_parties off: no parties" "$(yes_no 'parties_check none "$tmp/pt-f.txt"')"
+	sql "UPDATE \`char\` SET base_level = ${pt_level:-1}, base_exp = 0 WHERE char_id = $pt_id"
 	cp "$party_saved" "$party_yml"
 fi
 
