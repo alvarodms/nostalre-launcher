@@ -31,7 +31,16 @@
 #   shops the app's AI shop settings (@populate vendors): Prontera alone / main towns / all towns, Shops per town 50%,
 #        Shop prices 200% on a Red Potion, supplies only, loot only with cards (1-2 in dungeon shops only), and AI shops
 #        off leaving no shop merchants behind
-# Usage: scripts/test-population.sh [off|on|s2|s3|party|levels|formation|personality|shops|all]   (RATHENA_DIR=<server checkout>, POP_BIN=<bin dir>)
+#   parties shell parties (db/population_party.yml, @populate parties), with every party recruiting and, on the Veins
+#        field, singing and with a Professor: two parties form there as the map fills (a leader on the camp, a healer,
+#        3-5 roamers, Bard and Dancer side by side, a Professor, second classes); a player entering the leader's chat room
+#        is told the party is full and a member whispered "party" says it is in one; over 6 min at the first camp the same
+#        shells keep their duties (camp held, roamers back and out again with Blessing and Increase Agility, songs up,
+#        the leader sitting in a chat room); a roamer killed far out (#kill) lies there and gets up unraised, one killed
+#        at the camp is raised by the priest, one emptied of SP there gets the Professor's Soul Exchange; on a
+#        beginners' field the party's classes step down and its class duties are left out; and the switch off leaves
+#        none (POP_PARTY_SAMPLES=<n> watches n x 15 s, POP_KEEP=1 keeps the watch's output in out/pop/parties-last)
+# Usage: scripts/test-population.sh [off|on|s2|s3|party|levels|formation|personality|shops|parties|all]   (RATHENA_DIR=<server checkout>, POP_BIN=<bin dir>)
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
@@ -722,6 +731,258 @@ if [ "$what" = shops ] || [ "$what" = all ]; then
 	check "SH9 AI shops off: $(nth "$tmp/shops-e.txt" 1), prontera ${on_map:-?} on the map (no sitters filling the cap)" \
 		"$(yes_no '[ "$(nth "$tmp/shops-e.txt" 1 | cut -d" " -f1)" = 0 ] && [ -n "$on_map" ] && [ "$on_map" -lt 100 ]')"
 	grep -aq 'could not open its shop' "$logs/map.log" && echo "note  map.log: $(grep -ac 'could not open its shop' "$logs/map.log") vendors could not open a shop" || true
+fi
+
+# --- parties: shell parties (db/population_party.yml) ----------------------------
+# parties_check <what> <probe output>...: reads the `@populate parties` reports in the outputs
+parties_py=$(cat <<'PY'
+import re, sys
+what, paths = sys.argv[1], sys.argv[2:3] # further arguments are the check's own
+MEMBER = re.compile(r'message: "member (\d+) (\S+) job (.+?) lv (\d+) name (\S+) at (\d+),(\d+) spot (\d+),(\d+) camp_dist (\d+) state (\S+) '
+	r'hp (\d+) sp (\d+) sit (\d) room (\d) bless (\d) agi (\d) songs (\d+) trips (\d+) raised (\d+) helps (\d+)')
+PARTY = re.compile(r'message: "party (\d+) (\S+) camp (\d+),(\d+) members (\d+)/(\d+) room \'([^\']*)\'')
+ABSENT = re.compile(r'message: "member (\d+) (\S+) job (.+?) absent')
+KEYS = "party duty job lv name x y sx sy dist state hp sp sit room bless agi songs trips raised helps".split()
+def samples(path): # one dict per report: {"parties": {id: {...}}, "members": [...]}
+	out, cur, seen = [], None, set()
+	for line in open(path, errors="replace"):
+		p = PARTY.search(line)
+		if p:
+			if cur is None or p.group(1) in seen:
+				cur, seen = {"parties": {}, "members": []}, set()
+				out.append(cur)
+			seen.add(p.group(1))
+			cur["parties"][p.group(1)] = dict(kind=p.group(2), camp=(int(p.group(3)), int(p.group(4))), on=int(p.group(5)),
+				size=int(p.group(6)), room=p.group(7))
+			continue
+		m = MEMBER.search(line)
+		if m and cur is not None:
+			d = dict(zip(KEYS, m.groups()))
+			for k in KEYS:
+				if k not in ("party", "duty", "job", "name", "state"):
+					d[k] = int(d[k])
+			cur["members"].append(d)
+		elif ABSENT.search(line) and cur is not None:
+			a = ABSENT.search(line)
+			cur["members"].append(dict(party=a.group(1), duty=a.group(2), job=a.group(3), name="", state="absent"))
+	return out
+def fail(msg):
+	print("      " + msg)
+	return 1
+FIRST = {"Swordman", "Swordsman", "Mage", "Magician", "Archer", "Acolyte", "Merchant", "Thief"}
+bad = 0
+reports = [r for path in paths for r in samples(path)]
+if not reports and what != "none":
+	sys.exit(fail("no @populate parties report in the output"))
+last = reports[-1] if reports else None
+
+if what == "shape": # <output>: two parties, each a leader on its camp, a healer, 3-5 roamers, a duo side by side, a Professor
+	if len(last["parties"]) != 2:
+		bad += fail("%d parties on the map, want 2" % len(last["parties"]))
+	for pid, party in last["parties"].items():
+		members = [m for m in last["members"] if m["party"] == pid]
+		duties = [m["duty"] for m in members]
+		if party["on"] != party["size"] or any(m["state"] == "absent" for m in members):
+			bad += fail("party %s: %d of %d members on the map" % (pid, party["on"], party["size"]))
+		if duties.count("anchor") != 1 or not 3 <= duties.count("roamer") <= 5 or len(members) > 12:
+			bad += fail("party %s: duties %s" % (pid, duties))
+		if not party["room"] and "support" not in duties and not any(m["duty"] == "anchor" and "Priest" in m["job"] for m in members):
+			bad += fail("party %s has nobody to heal it: %s" % (pid, [(m["duty"], m["job"]) for m in members]))
+		if party["room"] and "support" not in duties:
+			bad += fail("party %s: the leader holds a chat room and there is no support" % pid)
+		duo = [m for m in members if m["duty"] == "performer"]
+		if sorted(m["job"] for m in duo) != ["Bard", "Dancer"]:
+			bad += fail("party %s: performers %s, want a Bard and a Dancer" % (pid, [m["job"] for m in duo]))
+		elif max(abs(duo[0]["sx"] - duo[1]["sx"]), abs(duo[0]["sy"] - duo[1]["sy"])) != 1:
+			bad += fail("party %s: the duo's cells are not next to each other" % pid)
+		if [m["job"] for m in members if m["duty"] == "battery"] != ["Professor"]:
+			bad += fail("party %s: no Professor" % pid)
+		spots = [(m["sx"], m["sy"]) for m in members]
+		if len(set(spots)) != len(spots):
+			bad += fail("party %s: two members share a cell at the camp" % pid)
+		low = [m["job"] for m in members if m["job"] in FIRST or m["job"] == "Novice"]
+		if low:
+			bad += fail("party %s: %s on a level 100+ map" % (pid, low))
+		print("      party %s room '%s': %s" % (pid, party["room"], ", ".join("%s %s" % (m["duty"], m["job"]) for m in members)))
+
+elif what == "cycle": # <output>: over the watch, members keep their duty: who stays, who comes and goes
+	names = {}
+	for r in reports:
+		for m in r["members"]:
+			names.setdefault((m["party"], m["duty"], m.get("sx"), m.get("sy")), set()).add(m["name"])
+	swapped = {k: v for k, v in names.items() if len(v) > 1}
+	if swapped:
+		bad += fail("members were replaced by other shells: %s" % list(swapped.values())[:3])
+	live = [m for r in reports for m in r["members"] if m["state"] not in ("absent", "dead")]
+	stray = [(m["name"], m["duty"], m["dist"]) for m in live if m["duty"] != "roamer" and m["dist"] > 14]
+	if stray:
+		bad += fail("camp members away from their camp: %s" % stray[:4])
+	far = [(m["name"], m["dist"]) for m in live if m["duty"] == "roamer" and m["dist"] > 60]
+	if far:
+		bad += fail("roamers past their leash (Roam 40): %s" % far[:4])
+	for pid in last["parties"]:
+		roamers = [m for m in last["members"] if m["party"] == pid and m["duty"] == "roamer"]
+		states = {m["state"] for r in reports for m in r["members"] if m["party"] == pid and m["duty"] == "roamer"}
+		trips = sum(m.get("trips", 0) for m in roamers)
+		if trips < 1 or "hunt" not in states:
+			bad += fail("party %s: roamers made %d trips back, states seen %s" % (pid, trips, sorted(states)))
+		out = [m for r in reports[1:] for m in r["members"] if m["party"] == pid and m["duty"] == "roamer" and m["state"] == "hunt"]
+		buffed = [m for m in out if m["bless"] and m["agi"]]
+		if not out or len(buffed) * 10 < len(out) * 7:
+			bad += fail("party %s: %d of %d roamer sightings out hunting had Blessing and Increase Agility" % (pid, len(buffed), len(out)))
+		healers = [m for m in last["members"] if m["party"] == pid and m["helps"] > 0 and "Priest" in m["job"]]
+		if not healers:
+			bad += fail("party %s: no priest cast anything on a member" % pid)
+		sung = max((m["songs"] for r in reports for m in r["members"] if m["party"] == pid and m["state"] not in ("absent", "dead")), default=0)
+		if sung < 1:
+			bad += fail("party %s: nobody was ever under a song" % pid)
+		rooms = [m for r in reports[2:] for m in r["members"] if m["party"] == pid and m["duty"] == "anchor"]
+		if last["parties"][pid]["room"] and sum(m["room"] for m in rooms) * 2 < len(rooms):
+			bad += fail("party %s: the leader had the chat room open in %d of %d reports" % (pid, sum(m["room"] for m in rooms), len(rooms)))
+		if last["parties"][pid]["room"] and not any(m["sit"] for m in rooms):
+			bad += fail("party %s: the leader never sat down" % pid)
+		print("      party %s: %d trips back, states %s, %d/%d hunting sightings buffed, songs up to %d, priest casts %s" % (
+			pid, trips, sorted(states), len(buffed), len(out), sung, [m["helps"] for m in healers]))
+
+elif what == "pick": # <output> far|near|singer: a member to hurt: the roamer furthest out of the healers' sight, or one at a camp
+	want = sys.argv[3]
+	up = [m for m in last["members"] if m["state"] not in ("absent", "dead")]
+	if want == "far":
+		out = sorted((m for m in up if m["duty"] == "roamer" and m["state"] == "hunt" and m["dist"] >= 24), key=lambda m: -m["dist"])
+		print(out[0]["name"] if out else "")
+	else:
+		duties = ("performer",) if want == "singer" else ("battery", "performer")
+		at_camp = [m for m in up if m["duty"] in duties and m["party"] == sorted(last["parties"])[0]]
+		print(at_camp[0]["name"] if at_camp else "")
+	sys.exit(0)
+
+elif what == "sp": # <output> <name> <output before>: the member's SP was emptied; its party's Professor cast on it and it has SP again
+	name = sys.argv[3]
+	final = [m for m in last["members"] if m["name"] == name]
+	if not final:
+		sys.exit(fail("%s is not in the report" % name))
+	def casts(report):
+		return sum(m["helps"] for m in report["members"] if m["party"] == final[0]["party"] and m["duty"] == "battery")
+	before, after = casts(samples(sys.argv[4])[-1]), casts(last)
+	if after <= before or final[0]["sp"] < 30:
+		bad += fail("%s has %d%% SP; the Professor's casts on members went %d -> %d" % (name, final[0]["sp"], before, after))
+	print("      %s: %d%% SP after it was emptied, Professor casts %d -> %d" % (name, final[0]["sp"], before, after))
+
+elif what in ("walked", "raised"): # <output> <name>: dead in the first report, up at the camp in the last
+	name = sys.argv[3]
+	seen = [m for r in reports for m in r["members"] if m["name"] == name]
+	if len(seen) < 2:
+		sys.exit(fail("%s is in %d reports: it was replaced or left the party" % (name, len(seen))))
+	first, final = seen[0], seen[-1]
+	if what == "walked":
+		if first["state"] != "dead":
+			bad += fail("%s is '%s' 4 s after @kill, want dead (waiting out the Respawn)" % (name, first["state"]))
+		# by then it may have left the camp again: up, the same shell, and nobody raised it
+		if final["state"] == "dead" or final["raised"] != 0:
+			bad += fail("%s after the Respawn: %s at %d,%d (cell %d,%d), raised %d" % (name, final["state"], final["x"], final["y"],
+				final["sx"], final["sy"], final["raised"]))
+	else:
+		if final["state"] == "dead" or final["raised"] != 1:
+			bad += fail("%s killed by the healer: %s, raised %d" % (name, final["state"], final["raised"]))
+	print("      %s: %s -> %s at %d,%d, raised %d" % (name, first["state"], final["state"], final["x"], final["y"], final["raised"]))
+
+elif what == "low": # <output> <monster level>: classes the map's level allows, and no duty its classes cannot do
+	level = int(sys.argv[3])
+	top = level + max(3, level // 10) + 5 # population_step_down_job_for_map: the class floor may be this high
+	for m in last["members"]:
+		if m["state"] == "absent":
+			continue
+		floor = 1 if m["job"] == "Novice" else 10 if m["job"] in FIRST else 60 if m["job"] in ("High Priest", "Professor") else 45
+		if floor > top:
+			bad += fail("%s %s on a map with monster level %d" % (m["duty"], m["job"], level))
+		if m["duty"] in ("performer", "battery") or (m["duty"] == "support" and m["job"] not in ("Acolyte", "Priest", "High Priest")):
+			bad += fail("%s %s: a duty its class cannot do there" % (m["duty"], m["job"]))
+	if not any(m["duty"] == "anchor" for m in last["members"]):
+		bad += fail("no party on the map")
+	print("      level %d: %s" % (level, ", ".join("%s %s" % (m["duty"], m["job"]) for m in last["members"])))
+
+elif what == "none":
+	if reports:
+		bad += fail("%d parties with population_engine_parties off" % len(reports[-1]["parties"]))
+sys.exit(1 if bad else 0)
+PY
+)
+parties_check() { python3 -c "$parties_py" "$@" >&2; }
+if [ "$what" = parties ] || [ "$what" = all ]; then
+	echo "== parties: shell parties"
+	[ -n "$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")" ] || {
+		start_servers 0; probe "$tmp/create.txt" --create "$char" --seconds 1; }
+	# the shipped file with every party recruiting and, on the Veins field, singing and with a Professor; and a
+	# party on a beginners' field, to see its classes step down
+	party_yml="$RATHENA/db/population_party.yml"
+	party_saved="$(mktemp)"
+	cp "$party_yml" "$party_saved"
+	trap 'stop_servers; cp "$saved" "$conf"; rm -f "$saved"; cp "$party_saved" "$party_yml"; rm -f "$party_saved"; rm -rf "$tmp"' EXIT
+	sed -i.bak 's/RecruitChance: 50/RecruitChance: 100/' "$party_yml" && rm -f "$party_yml.bak"
+	cat >> "$party_yml" <<-'YML'
+	  - Map: ve_fild03
+	    Parties: { camp_leveling: 2 }
+	    Chance: { performer: 100, battery: 100 }
+	  - Map: pay_fild01
+	    Parties: { camp_leveling: 1 }
+	YML
+	report=(--social "say:@populate parties")
+	start_servers 1 "population_engine_demand_grace_ms: 20000" "population_engine_density_pct: 100"
+	check "PT1 population_party.yml loads without warnings" \
+		"$(yes_no '! grep -aE "^\[(Error|Warning)\]" "$logs/map.log" | grep -aqiE "party|ally_dead|ally_sp_below|skill set"')"
+
+	# a party forms as its map fills
+	probe "$tmp/pt-a.txt" --social "say:@warp ve_fild03" --social wait:12 "${report[@]}" --seconds 1
+	check "PT2 two parties on the Veins field: leader, healer, roamers, a duo side by side, a Professor; classes fit the map" \
+		"$(yes_no 'parties_check shape "$tmp/pt-a.txt"')"
+
+	# players cannot join yet: the leader's chat room answers them, and a member asked to party is taken
+	camp=$(grep -aoP 'message: "party \d+ \S+ camp \K\d+,\d+' "$tmp/pt-a.txt" | head -1)
+	leader=$(grep -aoP 'message: "party \d+ .* leader \K\d+' "$tmp/pt-a.txt" | head -1)
+	member=$(grep -aoP 'message: "member \d+ support .* name \K\S+' "$tmp/pt-a.txt" | head -1)
+	# as probe(), with the packet of what others say printed too (the leader's line in the room)
+	( cd "$CLIENT" && cargo run -q -p nostalre-network --example session_probe -- --user tester --pass tester --dump NotifyChat \
+		--social "say:@warp ve_fild03 ${camp/,/ }" --social wait:12 --social "chatroom-join:$leader" --social wait:3 \
+		--social "whisper:$member:party" --social wait:3 --seconds 1 ) > "$tmp/pt-h.txt" 2>&1 || true
+	[ -z "${POP_KEEP:-}" ] || { rm -rf "$work/parties-last"; cp -r "$tmp" "$work/parties-last"; }
+	check "PT2b in the leader's chat room the player is told the party is full; a member whispered 'party' says it is in one" \
+		"$(yes_no 'grep -aq "full right now" "$tmp/pt-h.txt" && grep -aq "in a party already" "$tmp/pt-h.txt"')"
+
+	# the player stands at the first camp: its members hold their cells, the roamers come and go
+	watch=(--social "say:@warp ve_fild03 ${camp/,/ }")
+	for _ in $(seq 1 "${POP_PARTY_SAMPLES:-26}"); do watch+=(--social wait:15 "${report[@]}"); done
+	probe "$tmp/pt-b.txt" "${watch[@]}" --social wait:1 --seconds 1
+	check "PT3 over $((${POP_PARTY_SAMPLES:-26} / 4)) min the same shells keep their duties: camp held, roamers back and out again buffed, songs, the leader's room" \
+		"$(yes_no 'parties_check cycle "$tmp/pt-b.txt"')"
+	[ -z "${POP_KEEP:-}" ] || { rm -rf "$work/parties-last"; cp -r "$tmp" "$work/parties-last"; cp "$logs/map.log" "$work/parties-last/"; }
+
+	# a roamer killed out of the healer's sight lies there for the party's Respawn, then is up at the camp
+	far=$(python3 -c "$parties_py" pick "$tmp/pt-b.txt" far)
+	probe "$tmp/pt-c.txt" --social wait:2 --social "say:#kill $far" --social wait:4 "${report[@]}" --social wait:40 "${report[@]}" --seconds 1
+	check "PT4 a roamer killed far from the camp (${far:-none found}) lies there, then is up again unraised, the same shell" \
+		"$(yes_no '[ -n "$far" ] && parties_check walked "$tmp/pt-c.txt" "$far"')"
+	# one killed at the camp is raised by the priest
+	near=$(python3 -c "$parties_py" pick "$tmp/pt-c.txt" near)
+	probe "$tmp/pt-d.txt" --social wait:2 --social "say:#kill $near" --social wait:1 "${report[@]}" --social wait:20 "${report[@]}" --seconds 1
+	check "PT5 a member killed at the camp (${near:-none found}) is raised by the priest" \
+		"$(yes_no '[ -n "$near" ] && parties_check raised "$tmp/pt-d.txt" "$near"')"
+
+	# one out of SP at the camp gets the Professor's
+	singer=$(python3 -c "$parties_py" pick "$tmp/pt-d.txt" singer)
+	probe "$tmp/pt-g.txt" --social wait:2 --social "say:#heal $singer -1 -30000" --social wait:10 "${report[@]}" --seconds 1
+	check "PT6 a member out of SP at the camp (${singer:-none found}) gets the Professor's Soul Exchange" \
+		"$(yes_no '[ -n "$singer" ] && parties_check sp "$tmp/pt-g.txt" "$singer" "$tmp/pt-d.txt"')"
+
+	# a beginners' field: the same party in the classes its level allows
+	probe "$tmp/pt-e.txt" --social "say:@warp pay_fild01" --social wait:12 "${report[@]}" --seconds 1
+	low=$(grep -aoP "map 'pay_fild01' has monster level \K\d+" "$logs/map.log" | tail -1)
+	check "PT7 on pay_fild01 (monster level ${low:-?}) the party's classes step down and class duties are left out" \
+		"$(yes_no '[ -n "$low" ] && parties_check low "$tmp/pt-e.txt" "$low"')"
+
+	start_servers 1 "population_engine_demand_grace_ms: 20000" "population_engine_density_pct: 100" "population_engine_parties: 0"
+	probe "$tmp/pt-f.txt" --social "say:@warp ve_fild03" --social wait:12 "${report[@]}" --seconds 1
+	check "PT8 population_engine_parties off: no parties" "$(yes_no 'parties_check none "$tmp/pt-f.txt"')"
+	cp "$party_saved" "$party_yml"
 fi
 
 echo "logs: $logs  probe output: kept only on failure"
