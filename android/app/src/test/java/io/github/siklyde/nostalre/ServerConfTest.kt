@@ -16,7 +16,7 @@ class ServerConfTest {
 
 	private val aiKeys = listOf(
 		"population_engine_chat_enable", "population_engine_chat_reply_enable",
-		"population_engine_vending_enable", "population_engine_daily_cycle",
+		"population_engine_vending_enable", "population_engine_daily_cycle", "population_engine_scored_skills",
 	)
 
 	private val defaults = ServerSettings.defaults
@@ -159,11 +159,12 @@ class ServerConfTest {
 	}
 
 	@Test fun eachAiPickGoesToItsOwnKey() {
-		assertEquals( listOf( "1", "1", "1", "0" ), aiKeys.map { battle( defaults )[it] } )
+		assertEquals( listOf( "1", "1", "1", "0", "1" ), aiKeys.map { battle( defaults )[it] } )
 		val conf = battle( defaults
 			.with( ServerSettings.AI_CHAT, false ).with( ServerSettings.AI_REPLIES, false )
-			.with( ServerSettings.AI_SHOPS, false ).with( ServerSettings.AI_ROUTINE, true ) )
-		assertEquals( listOf( "0", "0", "0", "1" ), aiKeys.map { conf[it] } )
+			.with( ServerSettings.AI_SHOPS, false ).with( ServerSettings.AI_ROUTINE, true )
+			.with( ServerSettings.AI_SKILLS, false ) )
+		assertEquals( listOf( "0", "0", "0", "1", "0" ), aiKeys.map { conf[it] } )
 	}
 
 	/** The heal timer ticks every 500 ms (NATURAL_HEAL_INTERVAL), the least the server takes. */

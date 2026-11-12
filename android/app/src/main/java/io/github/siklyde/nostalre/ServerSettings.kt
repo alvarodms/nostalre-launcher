@@ -161,6 +161,9 @@ object ServerSettings {
 		true ) { listOf( "population_engine_chat_reply_enable" to yesNo( it ) ) }
 	val AI_SHOPS = Toggle( "world", "ai_shops", "AI shops", "AI merchants open shops in town, common items at NPC prices, that you can buy from.",
 		true ) { listOf( "population_engine_vending_enable" to yesNo( it ) ) }
+	val AI_SKILLS = Toggle( "world", "ai_skills", "Smart skills",
+		"AI players pick the skill that suits the moment (the monster's element, a crowd, their SP) and fight their own way. Off: they cycle through their skills in turn.",
+		true ) { listOf( "population_engine_scored_skills" to yesNo( it ) ) }
 	val AI_ROUTINE = Toggle( "world", "ai_routine", "Daily routine",
 		"AI players in town follow the phone's clock: out and about by day, chatting in the evening (18:00), sitting at night (22:00 to 6:00).",
 		false ) { listOf( "population_engine_daily_cycle" to yesNo( it ) ) }
@@ -206,7 +209,7 @@ object ServerSettings {
 			listOf( BASE_EXP, JOB_EXP, QUEST_EXP, ITEM_DROPS, CARD_DROPS, MULTI_LEVEL_UP ) ),
 		Category( "Monsters", "How many monsters the maps have, and how fast they come back.", listOf( MONSTERS, RESPAWN ) ),
 		Category( "AI Players", "Other adventurers in the world, run by the server.",
-			listOf( AI, MAX_AI, DENSITY, AI_ROUTINE, AI_CHAT, AI_REPLIES, AI_SHOPS ) ),
+			listOf( AI, MAX_AI, DENSITY, AI_SKILLS, AI_ROUTINE, AI_CHAT, AI_REPLIES, AI_SHOPS ) ),
 		Category( "Character", "How your character recovers, and what dying costs.", listOf( REGEN, DEATH_PENALTY ) ),
 		Category( "Loot", "How drops reach your bag: straight away, or picked up from the ground.", listOf( AUTOLOOT, PICKUP_AREA ) ),
 		Category( "Skills", "Skills as the official game has them, or quicker to use.", listOf( SKIP_TELEPORT_MENU ) ),

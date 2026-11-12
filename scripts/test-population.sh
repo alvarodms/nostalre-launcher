@@ -10,14 +10,24 @@
 #   s3   the app's world settings (ServerConf.battleFile keys) reach the server: shell cap in the boot line,
 #        mob_count_rate in the monsters the boot loads
 #   levels shells suit their map: on a low, a mid and a high map and a town, each shell's level falls in the range
-#        its map and class allow, stats are ones that level could afford, gear is worn; off keeps the 99s
+#        its map and class allow, stats are ones that level could afford, gear is worn, no first class on Glast
+#        Heim Church (monster level 77) or above; off keeps the 99s
 # Needs: map/char/login servers built from the engine branch (POP_BIN, default out/pop/bin:
 #   RATHENA_DIR=<rathena-nostalre> with build-server.sh, or any host build) and the client checkout (the probe).
 #   party shells as party companions: a whisper or an invite joins, the party list shows it, it fights for the player
 #        and follows across maps, killed it stays in the party and gets up next to the player on their next map, it
 #        leaves on "bye", on logout and when the engine stops, it shares EXP like a member (Even Share within
 #        party_share_level, Each Take beyond it), and only the player's own rows reach SQLite
-# Usage: scripts/test-population.sh [off|on|s2|s3|party|levels|all]   (RATHENA_DIR=<server checkout>, POP_BIN=<bin dir>)
+#   formation three companions around a player who walks and stops in Prontera: at each stop every one stands on a
+#        cell of its own, not the player's, at most 5 cells away (@where)
+#   personality builds and temperaments (db/population_personality.yml): on four maps, following one shell for a
+#        minute (shells only fight near a player), @populate levels every 15 s shows each Priest, Wizard, Knight and Hunter with a build of its class (battle priests
+#        with maces, spear knights with spears), every shell a temperament with reaction and precision in its
+#        ranges, some idle pauses taken (none by a reckless one), the file loads clean, and Wizards chose a basic attack at
+#        most 15% of the time; then the same
+#        tour with population_engine_scored_skills off, for comparison (POP_TOUR_MAPS="<maps>" tours fewer maps,
+#        POP_SKIP_OFF=1 skips the second tour)
+# Usage: scripts/test-population.sh [off|on|s2|s3|party|levels|formation|personality|all]   (RATHENA_DIR=<server checkout>, POP_BIN=<bin dir>)
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
@@ -400,6 +410,9 @@ for job, spawn_job, base, jl, *rest in rows:
 	# population_fit_job_to_map: on a field, no class whose floor is more than 5 above the band
 	if map_level and floor_cap(job)[0] > map_level + max(3, map_level // 10) + 5:
 		bad.append(f"{job} (from {spawn_job or job}) did not step down: floor {floor_cap(job)[0]}")
+	# population_promote_job_for_map: from monster level 60 a first class moves up to a second class
+	if map_level >= 60 and job in FIRST:
+		bad.append(f"{job} {base} on a level {map_level} map did not step up")
 	base, jl = int(base), int(jl)
 	stats = [int(x) for x in rest[:6]]
 	weapon, armor = int(rest[6]), int(rest[7])
@@ -438,7 +451,7 @@ if [ "$what" = levels ] || [ "$what" = all ]; then
 	full_density="population_engine_density_pct: 100"
 	# low (Knights only, then first classes too), mid, high, a town, and a field with no monsters at all
 	visit=()
-	for m in prt_fild08 gef_fild00 gef_fild10 tur_dun04 prontera pay_fild05; do
+	for m in prt_fild08 gef_fild00 gef_fild10 tur_dun04 gl_church prontera pay_fild05; do
 		visit+=(--social "say:@warp $m" --social wait:14 --social "say:@populate levels" --social wait:1)
 	done
 
@@ -452,6 +465,8 @@ if [ "$what" = levels ] || [ "$what" = all ]; then
 	check "AC1 gef_fild00 shells fit" "$(yes_no 'levels_check "$tmp/levels.txt" gef_fild00 "${low2:-0}"')"
 	check "AC1 gef_fild10 shells fit" "$(yes_no 'levels_check "$tmp/levels.txt" gef_fild10 "${mid:-0}"')"
 	check "AC1 tur_dun04 shells fit" "$(yes_no 'levels_check "$tmp/levels.txt" tur_dun04 "${high:-0}"')"
+	gl=$(map_level gl_church)
+	check "AC5 gl_church (monster level ${gl:-?}) shells fit, no first class" "$(yes_no 'levels_check "$tmp/levels.txt" gl_church "${gl:-0}"')"
 	check "AC2 prontera (town) shells fit" "$(yes_no 'levels_check "$tmp/levels.txt" prontera 0')"
 	check "AC2 pay_fild05 (no monsters) shells fit" "$(yes_no 'levels_check "$tmp/levels.txt" pay_fild05 0')"
 
@@ -460,6 +475,154 @@ if [ "$what" = levels ] || [ "$what" = all ]; then
 	top=$(grep -aoP 'shell job .* lv \K99(?=/70 )' "$tmp/levels-off.txt" | wc -l || true)
 	check "AC4 switch off: the old 99/70 shells on gef_fild10 ($top), no map level computed" \
 		"$(yes_no '[ "$top" -gt 0 ] && ! grep -aq "has monster level" "$logs/map.log"')"
+fi
+
+# --- formation: companions spread around their idle owner --------------------------
+# formation_check <probe output> <marker>: the @where lines after <marker> (the owner's first): each companion on its
+# own cell, not the owner's, at most 5 cells away
+formation_py=$(cat <<'PY'
+import re, sys
+path, marker, owner = sys.argv[1], sys.argv[2], sys.argv[3]
+part = open(path, errors="replace").read().split(marker)[-1].split("social: say:@where " + owner)
+where = lambda t: re.findall(r'message: "(\S[^"]*?) (\w+) (\d+) (\d+)"', t)
+rows = where(part[1].split("social: walk")[0]) if len(part) > 1 else []
+if not rows:
+	print("      no @where answers"); sys.exit(1)
+(_, m, ox, oy), mates = rows[0], rows[1:]
+ox, oy = int(ox), int(oy)
+cells = [(int(x), int(y)) for _, _, x, y in mates]
+print(f"      owner {ox},{oy}; companions " + ", ".join(f"{n} {x},{y} ({max(abs(int(x) - ox), abs(int(y) - oy))})" for n, _, x, y in mates))
+bad = len(mates) < 3 or len(set(cells)) != len(cells) or any(c == (ox, oy) or max(abs(c[0] - ox), abs(c[1] - oy)) > 5 for c in cells)
+sys.exit(1 if bad else 0)
+PY
+)
+formation_check() { python3 -c "$formation_py" "$@" >&2; }
+if [ "$what" = formation ] || [ "$what" = all ]; then
+	echo "== companion formation"
+	[ -n "$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")" ] || {
+		start_servers 0; probe "$tmp/create.txt" --create "$char" --seconds 1; }
+	id=$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")
+	sql "DELETE FROM party WHERE leader_char = $id"
+	sql "UPDATE \`char\` SET party_id = 0, last_map = 'prt_fild08', last_x = 170, last_y = 375 WHERE char_id = $id"
+	start_servers 1
+	probe "$tmp/f-who.txt" --social wait:10 --social "say:@who" --seconds 1
+	names=$(grep -aoP 'message: "Name: \K[^|()"]+?(?= *(\(|\||"))' "$tmp/f-who.txt" | grep -vxF "$char" | head -3 || true)
+	s1=$(echo "$names" | sed -n 1p); s2=$(echo "$names" | sed -n 2p); s3=$(echo "$names" | sed -n 3p)
+	check "AC1 three shells to party with: '$s1', '$s2', '$s3'" "$(yes_no '[ -n "$s3" ]')"
+	if [ -n "$s3" ]; then
+		where_args=(--social "say:@where $char" --social "say:@where $s1" --social "say:@where $s2" --social "say:@where $s3")
+		probe "$tmp/f-main.txt" --social "whisper:$s1:party" --social wait:3 --social "invite:$s2" --social wait:2 \
+			--social "invite:$s3" --social wait:2 --social "say:@warp prontera 156 191" --social wait:10 \
+			--social "walk:156,180" --social wait:8 \
+			"${where_args[@]}" --social wait:1 --social "walk:150,170" --social wait:8 \
+			"${where_args[@]}" --social wait:1 --social "walk:156,160" --social wait:8 "${where_args[@]}" --seconds 2
+		check "AC1 all three joined" "$(yes_no '[ "$(grep -ac "lead the way" "$tmp/f-main.txt")" -ge 3 ]')"
+		for stop in 156,180 150,170 156,160; do
+			check "AC2 owner stopped at $stop: companions on their own cells around them" \
+				"$(yes_no 'formation_check "$tmp/f-main.txt" "social: walk:$stop" "$char"')"
+		done
+	fi
+fi
+
+# --- personality: builds × temperaments, the scored picker -----------------------
+personality_py=$(cat <<'PY'
+import re, sys
+path, mode, items_path, pers_path = sys.argv[1:5]
+full = open(path, errors="replace").read()
+# a snapshot every 15 s per map; each map's last one counts
+text = "".join(part.split("social: say:@populate levels")[-1] for part in full.split("social: say:@warp ")[1:])
+rows = re.findall(r'shell job ([^"(]+?)(?:\(from [^)]+\))? lv \d+/\d+ stats [\d/]+ weapon (\d+) armor \d+ shoes \d+ hp \d+/\d+ \w+ (\S+)/(\S+) react (\d+) prec (\d+) acts (\d+)/(\d+) pauses (\d+)', text)
+ids = {}
+for m in re.finditer(r'- Id: (\d+)\n\s+AegisName: (\S+)', open(items_path).read()):
+    ids[m.group(2)] = int(m.group(1))
+pers = open(pers_path).read()
+temps = {}
+for m in re.finditer(r'- Temperament: (\w+)\n(?:\s+\w+:.*\n)*?\s+ReactionMs: \[(\d+), (\d+)\]\n\s+Precision: \[(\d+), (\d+)\]', pers):
+    temps[m.group(1)] = tuple(int(x) for x in m.groups()[1:])
+FAMILY = {"Priest": "priest", "High Priest": "priest", "Wizard": "wizard", "High Wizard": "wizard",
+          "Knight": "knight", "Lord Knight": "knight", "Hunter": "hunter", "Sniper": "hunter"}
+MACES = {ids[n] for n in ("Mace", "Morning_Star", "Chain", "Stunner", "Sword_Mace")}
+SPEARS = {ids[n] for n in ("Pike", "Guisarme", "Glaive", "Partizan", "Trident")}
+bad, builds, acts = [], {}, {}
+paused = 0
+for job, weapon, build, temp, react, prec, skill, melee, pauses in rows:
+    weapon, react, prec, skill, melee, pauses = int(weapon), int(react), int(prec), int(skill), int(melee), int(pauses)
+    paused += pauses
+    if pauses and temp == "reckless":
+        bad.append(f"{job} reckless (no Pauses) took {pauses} pauses")
+    fam = FAMILY.get(job)
+    builds[f"{job}:{build}"] = builds.get(f"{job}:{build}", 0) + 1
+    if fam and not build.startswith(fam + "_"):
+        bad.append(f"{job} has build {build}")
+    if not fam and build != "-":
+        bad.append(f"{job} has build {build}, its job has none")
+    if mode == "on":
+        if temp not in temps:
+            bad.append(f"{job} temperament {temp}")
+        else:
+            rlo, rhi, plo, phi = temps[temp]
+            if not (rlo <= react <= rhi and plo <= prec <= phi):
+                bad.append(f"{job} {temp} react {react} prec {prec} outside {temps[temp]}")
+    if build == "priest_battle" and weapon and weapon not in MACES:
+        bad.append(f"priest_battle with weapon {weapon}")
+    if build == "knight_spear" and weapon and weapon not in SPEARS:
+        bad.append(f"knight_spear with weapon {weapon}")
+    key = fam or "other"
+    a = acts.setdefault(key, [0, 0])
+    a[0] += skill; a[1] += melee
+print(f"      {len(rows)} shells; builds " + ", ".join(f"{k} {v}" for k, v in sorted(builds.items()) if FAMILY.get(k.split(':')[0])))
+print(f"      {paused} idle pauses taken")
+print("      choices skill/basic: " + ", ".join(f"{k} {s}/{m}" for k, (s, m) in sorted(acts.items())))
+for line in sorted(set(bad))[:15]:
+    print("      ! " + line)
+wiz = acts.get("wizard", [0, 0])
+if mode == "on" and sum(wiz) and wiz[1] > 0.15 * sum(wiz):
+    print(f"      ! wizards chose a basic attack {wiz[1]} times in {sum(wiz)}")
+    bad.append("wizard melee")
+if mode == "on" and not paused:
+    bad.append("no idle pause taken")
+if not rows or (mode == "on" and not sum(sum(v) for v in acts.values())):
+    bad.append("no shells or no choices")
+sys.exit(1 if bad else 0)
+PY
+)
+personality_check() { python3 -c "$personality_py" "$@" "$RATHENA/db/re/item_db_equip.yml" "$RATHENA/db/population_personality.yml" >&2; }
+if [ "$what" = personality ] || [ "$what" = all ]; then
+	echo "== personalities"
+	[ -n "$(sql "SELECT char_id FROM \`char\` WHERE name = '$char'")" ] || {
+		start_servers 0; probe "$tmp/create.txt" --create "$char" --seconds 1; }
+	# Shells only fight within sight of a player (pop_combat_tick_per_real_pc), so the player goes to them: a
+	# shell from @whomap, followed (@jumpto) for a minute, a snapshot every 15 s. A shell left behind stops, and
+	# a pause that comes due while nobody is near cannot start. The map keeps its shells between the two
+	# sessions (the 20 s demand grace).
+	personality_tour() { # personality_tour <out file>
+		local m names
+		: > "$1"
+		for m in ${POP_TOUR_MAPS:-gef_dun01 iz_dun03 gl_prison gef_dun02}; do
+			probe "$tmp/who-$m.txt" --social "say:@warp $m" --social wait:6 --social "say:@whomap $m" --seconds 1
+			names=$(grep -aoP 'message: "Name: \K[^|()"]+?(?= *(\(|\||"))' "$tmp/who-$m.txt" | grep -vxF "$char" | head -1 || true)
+			local visit=(--social "say:@warp $m") _
+			for _ in 1 2 3 4; do
+				[ -n "$names" ] && visit+=(--social "say:@jumpto $names")
+				visit+=(--social wait:15 --social "say:@populate levels")
+			done
+			probe "$tmp/visit-$m.txt" "${visit[@]}" --social wait:1 --seconds 1
+			cat "$tmp/visit-$m.txt" >> "$1"
+		done
+	}
+	start_servers 1 "population_engine_demand_grace_ms: 20000" "population_engine_density_pct: 100"
+	grep -aE "population_personality|population_skill_db.*(unknown|Kind)" "$logs/map.log" | head -5 >&2 || true
+	check "AC1 population_personality.yml loads without warnings" \
+		"$(yes_no '! grep -aE "^\[(Error|Warning)\]" "$logs/map.log" | grep -aqiE "personality|unknown (Kind|gear set|temperament)|Missing node"')"
+	personality_tour "$tmp/pers-on.txt"
+	check "AC2 builds fit their class, temperaments their ranges, wizards hardly melee" \
+		"$(yes_no 'personality_check "$tmp/pers-on.txt" on')"
+	if [ -z "${POP_SKIP_OFF:-}" ]; then
+		start_servers 1 "population_engine_demand_grace_ms: 20000" "population_engine_density_pct: 100" "population_engine_scored_skills: 0"
+		personality_tour "$tmp/pers-off.txt"
+		echo "      scored_skills off (for comparison):" >&2
+		personality_check "$tmp/pers-off.txt" off || true
+	fi
 fi
 
 echo "logs: $logs  probe output: kept only on failure"
