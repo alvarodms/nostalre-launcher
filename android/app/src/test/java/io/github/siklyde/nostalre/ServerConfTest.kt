@@ -168,6 +168,12 @@ class ServerConfTest {
 		assertEquals( listOf( "0", "0", "0", "1", "0", "0" ), aiKeys.map { conf[it] } )
 	}
 
+	@Test fun transcendentShareStartsAsTheServerShipsIt() {
+		assertEquals( "30", battle( defaults )["population_engine_trans_pct"] )
+		assertEquals( "70", battle( defaults.with( ServerSettings.AI_TRANS, 70 ) )["population_engine_trans_pct"] )
+		assertTrue( ServerSettings.TRANS_STEPS.all { it in 0..100 } ) // the server's range
+	}
+
 	@Test fun shopsStartAsTheServerShipsThem() {
 		val conf = battle( defaults )
 		assertEquals( "100", conf["population_engine_vendor_pct"] )

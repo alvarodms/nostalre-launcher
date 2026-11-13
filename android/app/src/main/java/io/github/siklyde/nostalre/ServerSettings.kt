@@ -117,6 +117,8 @@ object ServerSettings {
 	val PICKUP_AREA_STEPS = listOf( 0, 1, 2, 3, 5, 7, 14 )
 	/** Party EXP bonus, percent per member beyond the first; 0 is official (none). */
 	val PARTY_BONUS_STEPS = listOf( 0, 5, 10, 15, 20, 25, 50 )
+	/** AI players' second classes that are transcendent, percent; the server ships 30. */
+	val TRANS_STEPS = listOf( 0, 10, 30, 50, 70, 100 )
 
 	// conf/battle/drops.conf: every item rate but the cards', and the cards'
 	val DROP_KEYS = listOf(
@@ -181,6 +183,9 @@ object ServerSettings {
 	val AI_PARTIES = Toggle( "world", "ai_parties", "AI parties",
 		"On leveling maps some AI players gather as a party: a leader at a camp, a priest who heals and buffs, killers who hunt around it and come back, on some maps a Bard and Dancer singing. Off: every AI player hunts alone.",
 		true ) { listOf( "population_engine_parties" to yesNo( it ) ) }
+	val AI_TRANS = Step( "world", "ai_trans", "Transcendent",
+		"How many AI players with a second class are transcendent (Lord Knight, High Priest), from level 60. Past level 99 they are third classes, a transcendent one's transcendent too.",
+		TRANS_STEPS, 30, ::percent ) { listOf( "population_engine_trans_pct" to it ) }
 	val AI_ROUTINE = Toggle( "world", "ai_routine", "Daily routine",
 		"AI players in town follow the phone's clock: out and about by day, chatting in the evening (18:00), sitting at night (22:00 to 6:00).",
 		false ) { listOf( "population_engine_daily_cycle" to yesNo( it ) ) }
@@ -255,7 +260,7 @@ object ServerSettings {
 			listOf( BASE_EXP, JOB_EXP, QUEST_EXP, ITEM_DROPS, CARD_DROPS, MULTI_LEVEL_UP, PARTY_BONUS ) ),
 		Category( "Monsters", "How many monsters the maps have, and how fast they come back.", listOf( MONSTERS, RESPAWN ) ),
 		Category( "AI Players", "Other adventurers in the world, run by the server.",
-			listOf( AI, MAX_AI, DENSITY, AI_SKILLS, AI_PARTIES, AI_ROUTINE, AI_CHAT, AI_REPLIES ) ),
+			listOf( AI, MAX_AI, DENSITY, AI_SKILLS, AI_PARTIES, AI_TRANS, AI_ROUTINE, AI_CHAT, AI_REPLIES ) ),
 		Category( "AI Shops", "Shops the AI merchants run in town: where, how many, what they sell and for how much.",
 			listOf( AI_SHOPS, SHOPS_PER_TOWN, SHOP_TOWNS, SHOP_PRICES, SHOPS_MOVE, SHOP_LOOT, SHOP_SUPPLIES, SHOP_GEAR, SHOP_CARDS ) ),
 		Category( "Character", "How your character recovers, and what dying costs.", listOf( REGEN, DEATH_PENALTY ) ),
